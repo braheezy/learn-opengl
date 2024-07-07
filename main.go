@@ -80,55 +80,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// -------- Shaders ----------
-	// Create a vertex shader object ID
-	vertexShader := gl.CreateShader(gl.VERTEX_SHADER)
-	// Put the shader source code into the vertex shader. It must be a null-terminated string
-	// in C flavor.
-	sourceString, vertexFreeFunc := gl.Strs(vertexShaderSource, "\x00")
-	defer vertexFreeFunc()
-	gl.ShaderSource(vertexShader, 1, sourceString, nil)
-	// Compile the shader
-	gl.CompileShader(vertexShader)
-
-	// The next shader is the fragment shader, concerned with calculating color output
-	// for each pixel.
-	fragmentShader := gl.CreateShader(gl.FRAGMENT_SHADER)
-	sourceString, fragmentFreeFunc := gl.Strs(fragmentShaderSource, "\x00")
-	defer fragmentFreeFunc()
-	gl.ShaderSource(fragmentShader, 1, sourceString, nil)
-	gl.CompileShader(fragmentShader)
-
-	// Check shader compilation.
-	var success int32
-	infoLog := make([]uint8, 512)
-	gl.GetShaderiv(vertexShader, gl.COMPILE_STATUS, &success)
-	if success == gl.FALSE {
-		gl.GetShaderInfoLog(vertexShader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
-		log.Fatalf("Failed to compile vertex shader: %v", string(infoLog))
-	}
-	gl.GetShaderiv(fragmentShader, gl.COMPILE_STATUS, &success)
-	if success == gl.FALSE {
-		gl.GetShaderInfoLog(fragmentShader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
-		log.Fatalf("Failed to compile fragment shader: %v", string(infoLog))
-	}
-
-	// Link all shaders together to form a shader program, which is used during rendering.
-	shaderProgram := gl.CreateProgram()
-	gl.AttachShader(shaderProgram, vertexShader)
-	gl.AttachShader(shaderProgram, fragmentShader)
-	gl.LinkProgram(shaderProgram)
-
-	// Check program linking
-	gl.GetProgramiv(shaderProgram, gl.LINK_STATUS, &success)
-	if success == gl.FALSE {
-		gl.GetProgramInfoLog(shaderProgram, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
-		log.Fatalf("Failed to link shader program: %v", string(infoLog))
-	}
-
-	// Clean up shader objects
-	gl.DeleteShader(vertexShader)
-	gl.DeleteShader(fragmentShader)
+	shaderProgram := compileShaderProgram()
 
 	/* A graphics pipeline are the stages taken to determine how to paint 2D pixels
 	according to 3D coordinates. The stages are individual programs called shaders.
@@ -213,4 +165,58 @@ func processInput(w *glfw.Window) {
 	if w.GetKey(glfw.KeyEscape) == glfw.Press {
 		w.SetShouldClose(true)
 	}
+}
+
+func compileShaderProgram() uint32 {
+	// -------- Shaders ----------
+	// Create a vertex shader object ID
+	vertexShader := gl.CreateShader(gl.VERTEX_SHADER)
+	// Put the shader source code into the vertex shader. It must be a null-terminated string
+	// in C flavor.
+	sourceString, vertexFreeFunc := gl.Strs(vertexShaderSource, "\x00")
+	defer vertexFreeFunc()
+	gl.ShaderSource(vertexShader, 1, sourceString, nil)
+	// Compile the shader
+	gl.CompileShader(vertexShader)
+
+	// The next shader is the fragment shader, concerned with calculating color output
+	// for each pixel.
+	fragmentShader := gl.CreateShader(gl.FRAGMENT_SHADER)
+	sourceString, fragmentFreeFunc := gl.Strs(fragmentShaderSource, "\x00")
+	defer fragmentFreeFunc()
+	gl.ShaderSource(fragmentShader, 1, sourceString, nil)
+	gl.CompileShader(fragmentShader)
+
+	// Check shader compilation.
+	var success int32
+	infoLog := make([]uint8, 512)
+	gl.GetShaderiv(vertexShader, gl.COMPILE_STATUS, &success)
+	if success == gl.FALSE {
+		gl.GetShaderInfoLog(vertexShader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
+		log.Fatalf("Failed to compile vertex shader: %v", string(infoLog))
+	}
+	gl.GetShaderiv(fragmentShader, gl.COMPILE_STATUS, &success)
+	if success == gl.FALSE {
+		gl.GetShaderInfoLog(fragmentShader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
+		log.Fatalf("Failed to compile fragment shader: %v", string(infoLog))
+	}
+
+	// Link all shaders together to form a shader program, which is used during rendering.
+	shaderProgram := gl.CreateProgram()
+	gl.AttachShader(shaderProgram, vertexShader)
+	gl.AttachShader(shaderProgram, fragmentShader)
+	gl.LinkProgram(shaderProgram)
+
+	// Check program linking
+	gl.GetProgramiv(shaderProgram, gl.LINK_STATUS, &success)
+	if success == gl.FALSE {
+		gl.GetProgramInfoLog(shaderProgram, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
+		log.Fatalf("Failed to link shader program: %v", string(infoLog))
+	}
+
+	// Clean up shader objects
+	gl.DeleteShader(vertexShader)
+	gl.DeleteShader(fragmentShader)
+
+	return shaderProgram
 }
