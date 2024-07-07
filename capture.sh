@@ -13,16 +13,16 @@ CHILD_PID=$(pgrep -P $PID)
 
 OUT_DIR="$PWD/screenshots/"
 mkdir -p "$OUT_DIR"
-OUT_FILE=$(git branch --show-current)
+OUT_FILENAME=$1
 
-[ -f "$OUT_DIR/$OUT_FILE.png" ] && rm -f "$OUT_DIR/$OUT_FILE.png"
+[ -f "$OUT_DIR/$OUT_FILENAME.png" ] && rm -f "$OUT_DIR/$OUT_FILENAME.png"
 
 # flameshot was the only tool that would take a screenshot of a screen on Wayland
-flameshot screen --path "$OUT_DIR/$OUT_FILE.png"
+flameshot screen --path "$OUT_DIR/$OUT_FILENAME.png"
 
 # No tool can screenshot a region, so crop the region out of the screensize shot
 CROP_REGION="800x600+880+420"
-convert "$OUT_DIR/$OUT_FILE.png" -crop $CROP_REGION "$OUT_DIR/$OUT_FILE.png"
+convert "$OUT_DIR/$OUT_FILENAME.png" -crop $CROP_REGION "$OUT_DIR/$OUT_FILENAME.png"
 
 # Close the processes.
 kill "$CHILD_PID"
