@@ -2,8 +2,19 @@
 
 set -eou pipefail
 
+cleanup() {
+    if [[ -n "${PID-}" ]]; then
+        kill $PID 2>/dev/null || true
+    fi
+    if [[ -n "${CHILD_PID-}" ]]; then
+        kill "$CHILD_PID" 2>/dev/null || true
+    fi
+}
+# Trap SIGINT and SIGTERM to call the cleanup function
+trap cleanup SIGINT SIGTERM ERR EXIT
+
 # Launch the program
-go run main.go &
+go run . &
 # Capture it's PID
 PID=$!
 # Wait for it to finish launching

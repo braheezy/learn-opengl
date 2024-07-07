@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"math"
 	"runtime"
 	"unsafe"
 
@@ -12,32 +13,20 @@ import (
 const (
 	initialWindowWidth  = 800
 	initialWindowHeight = 600
-	enableWireframe     = true
+	enableWireframe     = false
 )
 
 var (
 	vertices = []float32{
-		0.5, 0.5, 0.0, // top right
-		0.5, -0.5, 0.0, // bottom right
-		-0.5, -0.5, 0.0, // bottom left
-		-0.5, 0.5, 0.0, // top left
+		// positions   // colors
+		0.5, -0.5, 0.0, 1.0, 0.0, 0.0, // bottom right
+		-0.5, -0.5, 0.0, 0.0, 1.0, 0.0, // bottom left
+		0.0, 0.5, 0.0, 0.0, 0.0, 1.0, // top
 	}
 	indices = []uint32{ // note that we start from 0!
 		0, 1, 3, // first triangle
 		1, 2, 3, // second triangle
 	}
-	vertexShaderSource = `#version 460 compatibility
-layout (location = 0) in vec3 aPos;
-void main()
-{
-	gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
-}`
-	fragmentShaderSource = `#version 460 compatibility
-out vec4 FragColor;
-void main()
-{
-	FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);
-}`
 )
 
 func init() {
@@ -80,7 +69,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	shaderProgram := compileShaderProgram()
+	shaderProgram, err := NewShader("shaders/shader.vs", "shaders/shader.fs")
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	/* A graphics pipeline are the stages taken to determine how to paint 2D pixels
 	according to 3D coordinates. The stages are individual programs called shaders.
@@ -124,8 +116,12 @@ func main() {
 		param5: the stride, or space between consecutive vertex attributes
 		param6: offset of position data in buffer
 	*/
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(3*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	// Set the position attribute
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(6*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
 	gl.EnableVertexAttribArray(0)
+	// Set the color attribute. Note the offset to account for the position data that comes first
+	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, int32(6*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
+	gl.EnableVertexAttribArray(1)
 
 	if enableWireframe {
 		gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
@@ -143,9 +139,15 @@ func main() {
 		gl.Clear(gl.COLOR_BUFFER_BIT)
 
 		// Active new program object by instructing OpenGL to use it.
-		gl.UseProgram(shaderProgram)
+		shaderProgram.use()
+		// Slowly change the color by setting a shader uniform variable value
+		timeValue := glfw.GetTime()
+		greenValue := float32((math.Sin(timeValue) / 2.0) + 0.5)
+		vertexColorLocation := gl.GetUniformLocation(shaderProgram.id, gl.Str("ourColor"+"\x00"))
+		gl.Uniform4f(vertexColorLocation, 0.0, greenValue, 0.0, 1.0)
+		// Bind and draw
 		gl.BindVertexArray(VAO)
-		gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, gl.Ptr(nil))
+		gl.DrawArrays(gl.TRIANGLES, 0, 3)
 
 		// Swap the color buffer (a large 2D buffer that contains color values for each pixel in GLFW's window) that is used to render to during this render iteration and show it as output to the screen.
 		window.SwapBuffers()
@@ -167,56 +169,56 @@ func processInput(w *glfw.Window) {
 	}
 }
 
-func compileShaderProgram() uint32 {
-	// -------- Shaders ----------
-	// Create a vertex shader object ID
-	vertexShader := gl.CreateShader(gl.VERTEX_SHADER)
-	// Put the shader source code into the vertex shader. It must be a null-terminated string
-	// in C flavor.
-	sourceString, vertexFreeFunc := gl.Strs(vertexShaderSource, "\x00")
-	defer vertexFreeFunc()
-	gl.ShaderSource(vertexShader, 1, sourceString, nil)
-	// Compile the shader
-	gl.CompileShader(vertexShader)
+// func compileShaderProgram() uint32 {
+// 	// -------- Shaders ----------
+// 	// Create a vertex shader object ID
+// 	vertexShader := gl.CreateShader(gl.VERTEX_SHADER)
+// 	// Put the shader source code into the vertex shader. It must be a null-terminated string
+// 	// in C flavor.
+// 	sourceString, vertexFreeFunc := gl.Strs(vertexShaderSource, "\x00")
+// 	defer vertexFreeFunc()
+// 	gl.ShaderSource(vertexShader, 1, sourceString, nil)
+// 	// Compile the shader
+// 	gl.CompileShader(vertexShader)
 
-	// The next shader is the fragment shader, concerned with calculating color output
-	// for each pixel.
-	fragmentShader := gl.CreateShader(gl.FRAGMENT_SHADER)
-	sourceString, fragmentFreeFunc := gl.Strs(fragmentShaderSource, "\x00")
-	defer fragmentFreeFunc()
-	gl.ShaderSource(fragmentShader, 1, sourceString, nil)
-	gl.CompileShader(fragmentShader)
+// 	// The next shader is the fragment shader, concerned with calculating color output
+// 	// for each pixel.
+// 	fragmentShader := gl.CreateShader(gl.FRAGMENT_SHADER)
+// 	sourceString, fragmentFreeFunc := gl.Strs(fragmentShaderSource, "\x00")
+// 	defer fragmentFreeFunc()
+// 	gl.ShaderSource(fragmentShader, 1, sourceString, nil)
+// 	gl.CompileShader(fragmentShader)
 
-	// Check shader compilation.
-	var success int32
-	infoLog := make([]uint8, 512)
-	gl.GetShaderiv(vertexShader, gl.COMPILE_STATUS, &success)
-	if success == gl.FALSE {
-		gl.GetShaderInfoLog(vertexShader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
-		log.Fatalf("Failed to compile vertex shader: %v", string(infoLog))
-	}
-	gl.GetShaderiv(fragmentShader, gl.COMPILE_STATUS, &success)
-	if success == gl.FALSE {
-		gl.GetShaderInfoLog(fragmentShader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
-		log.Fatalf("Failed to compile fragment shader: %v", string(infoLog))
-	}
+// 	// Check shader compilation.
+// 	var success int32
+// 	infoLog := make([]uint8, 512)
+// 	gl.GetShaderiv(vertexShader, gl.COMPILE_STATUS, &success)
+// 	if success == gl.FALSE {
+// 		gl.GetShaderInfoLog(vertexShader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
+// 		log.Fatalf("Failed to compile vertex shader: %v", string(infoLog))
+// 	}
+// 	gl.GetShaderiv(fragmentShader, gl.COMPILE_STATUS, &success)
+// 	if success == gl.FALSE {
+// 		gl.GetShaderInfoLog(fragmentShader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
+// 		log.Fatalf("Failed to compile fragment shader: %v", string(infoLog))
+// 	}
 
-	// Link all shaders together to form a shader program, which is used during rendering.
-	shaderProgram := gl.CreateProgram()
-	gl.AttachShader(shaderProgram, vertexShader)
-	gl.AttachShader(shaderProgram, fragmentShader)
-	gl.LinkProgram(shaderProgram)
+// 	// Link all shaders together to form a shader program, which is used during rendering.
+// 	shaderProgram := gl.CreateProgram()
+// 	gl.AttachShader(shaderProgram, vertexShader)
+// 	gl.AttachShader(shaderProgram, fragmentShader)
+// 	gl.LinkProgram(shaderProgram)
 
-	// Check program linking
-	gl.GetProgramiv(shaderProgram, gl.LINK_STATUS, &success)
-	if success == gl.FALSE {
-		gl.GetProgramInfoLog(shaderProgram, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
-		log.Fatalf("Failed to link shader program: %v", string(infoLog))
-	}
+// 	// Check program linking
+// 	gl.GetProgramiv(shaderProgram, gl.LINK_STATUS, &success)
+// 	if success == gl.FALSE {
+// 		gl.GetProgramInfoLog(shaderProgram, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
+// 		log.Fatalf("Failed to link shader program: %v", string(infoLog))
+// 	}
 
-	// Clean up shader objects
-	gl.DeleteShader(vertexShader)
-	gl.DeleteShader(fragmentShader)
+// 	// Clean up shader objects
+// 	gl.DeleteShader(vertexShader)
+// 	gl.DeleteShader(fragmentShader)
 
-	return shaderProgram
-}
+// 	return shaderProgram
+// }
