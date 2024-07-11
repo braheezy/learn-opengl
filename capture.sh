@@ -24,7 +24,7 @@ CHILD_PID=$(pgrep -P $PID)
 
 OUT_DIR="$PWD/screenshots/"
 mkdir -p "$OUT_DIR"
-OUT_FILENAME=$1
+OUT_FILENAME=${1:-$(git branch --show-current)}
 
 [ -f "$OUT_DIR/$OUT_FILENAME.png" ] && rm -f "$OUT_DIR/$OUT_FILENAME.png"
 
