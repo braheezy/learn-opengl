@@ -1,8 +1,10 @@
 package main
 
 import (
+	"image/jpeg"
+	"image/png"
 	"log"
-	"math"
+	"os"
 	"runtime"
 	"unsafe"
 
@@ -18,10 +20,11 @@ const (
 
 var (
 	vertices = []float32{
-		// positions   // colors
-		0.5, -0.5, 0.0, 1.0, 0.0, 0.0, // bottom right
-		-0.5, -0.5, 0.0, 0.0, 1.0, 0.0, // bottom left
-		0.0, 0.5, 0.0, 0.0, 0.0, 1.0, // top
+		// positions  // colors      // texture coords
+		0.5, 0.5, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, // top right
+		0.5, -0.5, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, // bottom right
+		-0.5, -0.5, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, // bottom left
+		-0.5, 0.5, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, // top left
 	}
 	indices = []uint32{ // note that we start from 0!
 		0, 1, 3, // first triangle
@@ -35,6 +38,9 @@ func init() {
 }
 
 func main() {
+	/*
+	 * GLFW init and configure
+	 */
 	// Initialize GLFW, which is used to manage windows, user input, opengl contexts, and related
 	// events.
 	err := glfw.Init()
@@ -43,43 +49,51 @@ func main() {
 	}
 	// Free resources used by GLFW when the program exits.
 	defer glfw.Terminate()
-
-	// Set various options for the window we're to create using hints.
+	// Using hints, set various options for the window we're about to create.
 	glfw.WindowHint(glfw.ContextVersionMajor, 4)
 	glfw.WindowHint(glfw.ContextVersionMinor, 6)
 	// Compatibility profile allows more deprecated function calls over core profile.
 	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCompatProfile)
 
+	/*
+	 * GLFW window creation
+	 */
 	// Create the window object, the required central object to most of GLFW's functions.
 	window, err := glfw.CreateWindow(initialWindowWidth, initialWindowHeight, "LearnOpenGL", nil, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	// Make the context relating to the just-created window the current context on the main thread.
 	// A context can only be current on one thread.
 	// A thread can only have one current context.
 	window.MakeContextCurrent()
-
 	// Set the function that is run every time the viewport is resized by the user.
 	window.SetFramebufferSizeCallback(framebufferSizeCallback)
 
-	// Load the OS-specific OpenGL function pointers
+	/*
+	 * Load OS-specific OpenGL function pointers
+	 */
 	if err := gl.Init(); err != nil {
 		log.Fatal(err)
 	}
 
+	/*
+	 * Build and compile our shader program
+	 */
 	shaderProgram, err := NewShader("shaders/shader.vs", "shaders/shader.fs")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	/* A graphics pipeline are the stages taken to determine how to paint 2D pixels
-	according to 3D coordinates. The stages are individual programs called shaders.
-
-	The vertex shader is the first shader. It takes as input a single vertex and transforms
-	it to other 3D coordinates. OpenGL expects a vertex and fragment shader.
-	*/
+	/*
+	 * set up vertex data (and buffer(s)) and configure vertex attributes
+	 *
+	 * A graphics pipeline are the stages taken to determine how to paint 2D pixels
+	 * according to 3D coordinates. The stages are individual programs called shaders.
+	 *
+	 * The vertex shader is the first shader. It takes as input a single vertex and transforms
+	 * it to other 3D coordinates. OpenGL expects a vertex and fragment shader.
+	 */
 	// Manage the memory in the GPU with a vertex buffer object (VBO) where many
 	// vertices can be give to the GPU at once.
 	var VBO uint32
@@ -105,27 +119,104 @@ func main() {
 	// Get the EBO data into a buffer too
 	gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, EBO)
 	gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, len(indices)*int(unsafe.Sizeof(indices[0])), gl.Ptr(indices), gl.STATIC_DRAW)
-
 	// Describe how OpenGL should interpret the vertex data by setting attributes.
-	/*
-		param1: which vertex attribute to configure. We specified the location of the position
-		        vertex attribute in the shader with `layout (location = 0)`.
-		param2: size of vertex attribute. It's vec3, so 3 values
-		param3: type of data (vec in GLSL is always float)
-		param4: if the data should be normalized. Ours already is
-		param5: the stride, or space between consecutive vertex attributes
-		param6: offset of position data in buffer
-	*/
 	// Set the position attribute
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(6*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
 	gl.EnableVertexAttribArray(0)
 	// Set the color attribute. Note the offset to account for the position data that comes first
-	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, int32(6*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
+	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
 	gl.EnableVertexAttribArray(1)
+	// Set the texture attribute.
+	gl.VertexAttribPointer(2, 2, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(6*unsafe.Sizeof(float32(0))))
+	gl.EnableVertexAttribArray(2)
+
+	/*
+	 * load and create a texture
+	 */
+	var texture1 uint32
+	gl.GenTextures(1, &texture1)
+	gl.BindTexture(gl.TEXTURE_2D, texture1)
+	// Set texture options
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	textureFile, err := os.Open("assets/container.jpg")
+	if err != nil {
+		log.Fatal(err)
+	}
+	textureImage, err := jpeg.Decode(textureFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	textureFile.Close()
+	bounds := textureImage.Bounds()
+	// Create a slice to hold the pixel data
+	pixelData := make([]byte, bounds.Dx()*bounds.Dy()*3)
+	// Convert the image to RGB and copy the pixel data to the slice
+	index := 0
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, _ := textureImage.At(x, y).RGBA()
+			pixelData[index] = byte(r >> 8)   // Red
+			pixelData[index+1] = byte(g >> 8) // Green
+			pixelData[index+2] = byte(b >> 8) // Blue
+			index += 3
+		}
+	}
+	// Generate texture from image data
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, int32(textureImage.Bounds().Dx()), int32(textureImage.Bounds().Dy()), 0, gl.RGB, gl.UNSIGNED_BYTE, gl.Ptr(pixelData))
+	// Generate mipmap, handling various resolutions of the texture at different distances.
+	gl.GenerateMipmap(gl.TEXTURE_2D)
+
+	var texture2 uint32
+	gl.GenTextures(1, &texture2)
+	gl.BindTexture(gl.TEXTURE_2D, texture2)
+	// Set texture options
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	textureFile, err = os.Open("assets/awesomeface.png")
+	if err != nil {
+		log.Fatal(err)
+	}
+	textureImage, err = png.Decode(textureFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	textureFile.Close()
+	bounds = textureImage.Bounds()
+	// Create a slice to hold the pixel data
+	pixelData = make([]byte, bounds.Dx()*bounds.Dy()*4)
+
+	// Convert the image to RGB and copy the pixel data to the slice
+	index = 0
+	for y := bounds.Max.Y - 1; y >= bounds.Min.Y; y-- {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, _ := textureImage.At(x, y).RGBA()
+			pixelData[index] = byte(r >> 8)   // Red
+			pixelData[index+1] = byte(g >> 8) // Green
+			pixelData[index+2] = byte(b >> 8) // Blue
+			pixelData[index+3] = byte(b >> 8) // Alpha
+			index += 4
+		}
+	}
+
+	// Generate texture from image data
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, int32(textureImage.Bounds().Dx()), int32(textureImage.Bounds().Dy()), 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(pixelData))
+	// Generate mipmap, handling various resolutions of the texture at different distances.
+	gl.GenerateMipmap(gl.TEXTURE_2D)
 
 	if enableWireframe {
 		gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
 	}
+
+	// Activate shaders
+	shaderProgram.use()
+	// tell opengl for each sampler to which texture unit it belongs to
+	gl.Uniform1i(gl.GetUniformLocation(shaderProgram.id, gl.Str("texture1"+"\x00")), 0)
+	shaderProgram.setInt("texture2", 1)
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -138,16 +229,16 @@ func main() {
 		// Clear the color buffer (as opposed to the depth or stencil buffer)
 		gl.Clear(gl.COLOR_BUFFER_BIT)
 
-		// Active new program object by instructing OpenGL to use it.
+		// Bind texture
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_2D, texture1)
+		gl.ActiveTexture(gl.TEXTURE1)
+		gl.BindTexture(gl.TEXTURE_2D, texture2)
+
+		// Render
 		shaderProgram.use()
-		// Slowly change the color by setting a shader uniform variable value
-		timeValue := glfw.GetTime()
-		greenValue := float32((math.Sin(timeValue) / 2.0) + 0.5)
-		vertexColorLocation := gl.GetUniformLocation(shaderProgram.id, gl.Str("ourColor"+"\x00"))
-		gl.Uniform4f(vertexColorLocation, 0.0, greenValue, 0.0, 1.0)
-		// Bind and draw
 		gl.BindVertexArray(VAO)
-		gl.DrawArrays(gl.TRIANGLES, 0, 3)
+		gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, gl.Ptr(nil))
 
 		// Swap the color buffer (a large 2D buffer that contains color values for each pixel in GLFW's window) that is used to render to during this render iteration and show it as output to the screen.
 		window.SwapBuffers()
@@ -168,57 +259,3 @@ func processInput(w *glfw.Window) {
 		w.SetShouldClose(true)
 	}
 }
-
-// func compileShaderProgram() uint32 {
-// 	// -------- Shaders ----------
-// 	// Create a vertex shader object ID
-// 	vertexShader := gl.CreateShader(gl.VERTEX_SHADER)
-// 	// Put the shader source code into the vertex shader. It must be a null-terminated string
-// 	// in C flavor.
-// 	sourceString, vertexFreeFunc := gl.Strs(vertexShaderSource, "\x00")
-// 	defer vertexFreeFunc()
-// 	gl.ShaderSource(vertexShader, 1, sourceString, nil)
-// 	// Compile the shader
-// 	gl.CompileShader(vertexShader)
-
-// 	// The next shader is the fragment shader, concerned with calculating color output
-// 	// for each pixel.
-// 	fragmentShader := gl.CreateShader(gl.FRAGMENT_SHADER)
-// 	sourceString, fragmentFreeFunc := gl.Strs(fragmentShaderSource, "\x00")
-// 	defer fragmentFreeFunc()
-// 	gl.ShaderSource(fragmentShader, 1, sourceString, nil)
-// 	gl.CompileShader(fragmentShader)
-
-// 	// Check shader compilation.
-// 	var success int32
-// 	infoLog := make([]uint8, 512)
-// 	gl.GetShaderiv(vertexShader, gl.COMPILE_STATUS, &success)
-// 	if success == gl.FALSE {
-// 		gl.GetShaderInfoLog(vertexShader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
-// 		log.Fatalf("Failed to compile vertex shader: %v", string(infoLog))
-// 	}
-// 	gl.GetShaderiv(fragmentShader, gl.COMPILE_STATUS, &success)
-// 	if success == gl.FALSE {
-// 		gl.GetShaderInfoLog(fragmentShader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
-// 		log.Fatalf("Failed to compile fragment shader: %v", string(infoLog))
-// 	}
-
-// 	// Link all shaders together to form a shader program, which is used during rendering.
-// 	shaderProgram := gl.CreateProgram()
-// 	gl.AttachShader(shaderProgram, vertexShader)
-// 	gl.AttachShader(shaderProgram, fragmentShader)
-// 	gl.LinkProgram(shaderProgram)
-
-// 	// Check program linking
-// 	gl.GetProgramiv(shaderProgram, gl.LINK_STATUS, &success)
-// 	if success == gl.FALSE {
-// 		gl.GetProgramInfoLog(shaderProgram, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
-// 		log.Fatalf("Failed to link shader program: %v", string(infoLog))
-// 	}
-
-// 	// Clean up shader objects
-// 	gl.DeleteShader(vertexShader)
-// 	gl.DeleteShader(fragmentShader)
-
-// 	return shaderProgram
-// }
