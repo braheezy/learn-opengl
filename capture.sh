@@ -2,6 +2,13 @@
 
 set -eou pipefail
 
+# Size of window
+WIDTH=800
+HEIGHT=600
+# Location of window
+X=880
+Y=420
+
 cleanup() {
     if [[ -n "${PID-}" ]]; then
         kill $PID 2>/dev/null || true
@@ -12,6 +19,30 @@ cleanup() {
 }
 # Trap SIGINT and SIGTERM to call the cleanup function
 trap cleanup SIGINT SIGTERM ERR EXIT
+print_usage() {
+    echo "Usage: $0 [-g] [-h]"
+    echo "  -g    Record a GIF instead of taking a screenshot."
+    echo "  -h    Display this help message."
+}
+
+# Parse arguments
+RECORD_GIF=false
+while getopts "gh" opt; do
+    case ${opt} in
+        g )
+            RECORD_GIF=true
+            ;;
+        h )
+            print_usage
+            exit 0
+            ;;
+        \? )
+            print_usage
+            exit 1
+            ;;
+    esac
+done
+shift $((OPTIND -1))
 
 # Launch the program
 go run . &
@@ -22,18 +53,24 @@ sleep 1
 # Get the child process it spawns, the actual OpenGL window
 CHILD_PID=$(pgrep -P $PID)
 
-OUT_DIR="$PWD/screenshots/"
+OUT_DIR="$PWD/screenshots"
 mkdir -p "$OUT_DIR"
 OUT_FILENAME=${1:-$(git branch --show-current)}
 
-[ -f "$OUT_DIR/$OUT_FILENAME.png" ] && rm -f "$OUT_DIR/$OUT_FILENAME.png"
+if $RECORD_GIF; then
+    [ -f "$OUT_DIR/$OUT_FILENAME.gif" ] && rm -f "$OUT_DIR/$OUT_FILENAME.gif"
 
-# flameshot was the only tool that would take a screenshot of a screen on Wayland
-flameshot screen --path "$OUT_DIR/$OUT_FILENAME.png"
+    peek
+else
+    [ -f "$OUT_DIR/$OUT_FILENAME.png" ] && rm -f "$OUT_DIR/$OUT_FILENAME.png"
 
-# No tool can screenshot a region, so crop the region out of the screensize shot
-CROP_REGION="800x600+880+420"
-convert "$OUT_DIR/$OUT_FILENAME.png" -crop $CROP_REGION "$OUT_DIR/$OUT_FILENAME.png"
+    # flameshot was the only tool that would take a screenshot of a screen on Wayland
+    flameshot screen --path "$OUT_DIR/$OUT_FILENAME.png"
+
+    # No tool can screenshot a region, so crop the region out of the screensize shot
+    CROP_REGION="${WIDTH}x${HEIGHT}+$X+$Y"
+    convert "$OUT_DIR/$OUT_FILENAME.png" -crop $CROP_REGION "$OUT_DIR/$OUT_FILENAME.png"
+fi
 
 # Close the processes.
 kill "$CHILD_PID"
