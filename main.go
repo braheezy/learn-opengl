@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-gl/gl/v4.6-compatibility/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 const (
@@ -20,11 +21,11 @@ const (
 
 var (
 	vertices = []float32{
-		// positions  // colors      // texture coords
-		0.5, 0.5, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, // top right
-		0.5, -0.5, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, // bottom right
-		-0.5, -0.5, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, // bottom left
-		-0.5, 0.5, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, // top left
+		// positions  // texture coords
+		0.5, 0.5, 0.0, 1.0, 1.0, // top right
+		0.5, -0.5, 0.0, 1.0, 0.0, // bottom right
+		-0.5, -0.5, 0.0, 0.0, 0.0, // bottom left
+		-0.5, 0.5, 0.0, 0.0, 1.0, // top left
 	}
 	indices = []uint32{ // note that we start from 0!
 		0, 1, 3, // first triangle
@@ -121,14 +122,11 @@ func main() {
 	gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, len(indices)*int(unsafe.Sizeof(indices[0])), gl.Ptr(indices), gl.STATIC_DRAW)
 	// Describe how OpenGL should interpret the vertex data by setting attributes.
 	// Set the position attribute
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
 	gl.EnableVertexAttribArray(0)
-	// Set the color attribute. Note the offset to account for the position data that comes first
-	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
-	gl.EnableVertexAttribArray(1)
 	// Set the texture attribute.
-	gl.VertexAttribPointer(2, 2, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(6*unsafe.Sizeof(float32(0))))
-	gl.EnableVertexAttribArray(2)
+	gl.VertexAttribPointer(1, 2, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
+	gl.EnableVertexAttribArray(1)
 
 	/*
 	 * load and create a texture
@@ -215,7 +213,7 @@ func main() {
 	// Activate shaders
 	shaderProgram.use()
 	// tell opengl for each sampler to which texture unit it belongs to
-	gl.Uniform1i(gl.GetUniformLocation(shaderProgram.id, gl.Str("texture1"+"\x00")), 0)
+	shaderProgram.setInt("texture1", 0)
 	shaderProgram.setInt("texture2", 1)
 
 	// Run the render loop until the window is closed by the user.
@@ -229,6 +227,18 @@ func main() {
 		// Clear the color buffer (as opposed to the depth or stencil buffer)
 		gl.Clear(gl.COLOR_BUFFER_BIT)
 
+		// Do transform maths
+		// Create an identity matrix
+		trans := mgl32.Ident4()
+		// Translate to bottom-right side
+		translation := mgl32.Translate3D(0.5, -0.5, 0.0)
+		trans = trans.Mul4(translation)
+		// Rotate the matrix continuously
+		// angle := mgl32.DegToRad(float32(glfw.GetTime()))
+		rotation := mgl32.HomogRotate3DZ(float32(glfw.GetTime()))
+		trans = trans.Mul4(rotation)
+		transSlice := trans[:]
+
 		// Bind texture
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.BindTexture(gl.TEXTURE_2D, texture1)
@@ -237,6 +247,8 @@ func main() {
 
 		// Render
 		shaderProgram.use()
+		transformLoc := gl.GetUniformLocation(shaderProgram.id, gl.Str("transform"+"\x00"))
+		gl.UniformMatrix4fv(transformLoc, 1, false, &transSlice[0])
 		gl.BindVertexArray(VAO)
 		gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, gl.Ptr(nil))
 
