@@ -234,7 +234,6 @@ func main() {
 		translation := mgl32.Translate3D(0.5, -0.5, 0.0)
 		trans = trans.Mul4(translation)
 		// Rotate the matrix continuously
-		// angle := mgl32.DegToRad(float32(glfw.GetTime()))
 		rotation := mgl32.HomogRotate3DZ(float32(glfw.GetTime()))
 		trans = trans.Mul4(rotation)
 		transSlice := trans[:]
