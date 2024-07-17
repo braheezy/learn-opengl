@@ -20,16 +20,62 @@ const (
 )
 
 var (
+	// 36 points for a cube
 	vertices = []float32{
 		// positions  // texture coords
-		0.5, 0.5, 0.0, 1.0, 1.0, // top right
-		0.5, -0.5, 0.0, 1.0, 0.0, // bottom right
-		-0.5, -0.5, 0.0, 0.0, 0.0, // bottom left
-		-0.5, 0.5, 0.0, 0.0, 1.0, // top left
+		-0.5, -0.5, -0.5, 0.0, 0.0,
+		0.5, -0.5, -0.5, 1.0, 0.0,
+		0.5, 0.5, -0.5, 1.0, 1.0,
+		0.5, 0.5, -0.5, 1.0, 1.0,
+		-0.5, 0.5, -0.5, 0.0, 1.0,
+		-0.5, -0.5, -0.5, 0.0, 0.0,
+
+		-0.5, -0.5, 0.5, 0.0, 0.0,
+		0.5, -0.5, 0.5, 1.0, 0.0,
+		0.5, 0.5, 0.5, 1.0, 1.0,
+		0.5, 0.5, 0.5, 1.0, 1.0,
+		-0.5, 0.5, 0.5, 0.0, 1.0,
+		-0.5, -0.5, 0.5, 0.0, 0.0,
+
+		-0.5, 0.5, 0.5, 1.0, 0.0,
+		-0.5, 0.5, -0.5, 1.0, 1.0,
+		-0.5, -0.5, -0.5, 0.0, 1.0,
+		-0.5, -0.5, -0.5, 0.0, 1.0,
+		-0.5, -0.5, 0.5, 0.0, 0.0,
+		-0.5, 0.5, 0.5, 1.0, 0.0,
+
+		0.5, 0.5, 0.5, 1.0, 0.0,
+		0.5, 0.5, -0.5, 1.0, 1.0,
+		0.5, -0.5, -0.5, 0.0, 1.0,
+		0.5, -0.5, -0.5, 0.0, 1.0,
+		0.5, -0.5, 0.5, 0.0, 0.0,
+		0.5, 0.5, 0.5, 1.0, 0.0,
+
+		-0.5, -0.5, -0.5, 0.0, 1.0,
+		0.5, -0.5, -0.5, 1.0, 1.0,
+		0.5, -0.5, 0.5, 1.0, 0.0,
+		0.5, -0.5, 0.5, 1.0, 0.0,
+		-0.5, -0.5, 0.5, 0.0, 0.0,
+		-0.5, -0.5, -0.5, 0.0, 1.0,
+
+		-0.5, 0.5, -0.5, 0.0, 1.0,
+		0.5, 0.5, -0.5, 1.0, 1.0,
+		0.5, 0.5, 0.5, 1.0, 0.0,
+		0.5, 0.5, 0.5, 1.0, 0.0,
+		-0.5, 0.5, 0.5, 0.0, 0.0,
+		-0.5, 0.5, -0.5, 0.0, 1.0,
 	}
-	indices = []uint32{ // note that we start from 0!
-		0, 1, 3, // first triangle
-		1, 2, 3, // second triangle
+	cubePositions = []mgl32.Vec3{
+		{0.0, 0.0, 0.0},
+		{2.0, 5.0, -15.0},
+		{-1.5, -2.2, -2.5},
+		{-3.8, -2.0, -12.3},
+		{2.4, -0.4, -3.5},
+		{-1.7, 3.0, -7.5},
+		{1.3, -2.0, -2.5},
+		{1.5, 2.0, -2.5},
+		{1.5, 0.2, -1.5},
+		{-1.3, 1.0, -1.5},
 	}
 )
 
@@ -78,6 +124,10 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Allow OpenGL to perform depth testing, where it uses the z-buffer to know when (not) to
+	// draw overlapping entities
+	gl.Enable(gl.DEPTH_TEST)
+
 	/*
 	 * Build and compile our shader program
 	 */
@@ -100,14 +150,9 @@ func main() {
 	var VBO uint32
 	// Store vertex attributes for each object in the VBO in a vertex array object (VAO)
 	var VAO uint32
-	// Store indices that tell OpenGL in what order to draw vertices. This helps reduce number of vertices
-	// by not having to provide individual triangles with overlapping sides e.g. for 2 triangles, we need
-	// 4 vertices instead of 6
-	var EBO uint32
 	// Get a unique ID for buffers.
 	gl.GenVertexArrays(1, &VAO)
 	gl.GenBuffers(1, &VBO)
-	gl.GenBuffers(1, &EBO)
 
 	// Bind VAO first
 	gl.BindVertexArray(VAO)
@@ -117,9 +162,6 @@ func main() {
 	// Get the vertex data into the buffer
 	// STATIC_DRAW: the data is set only once and used many times.
 	gl.BufferData(gl.ARRAY_BUFFER, len(vertices)*int(unsafe.Sizeof(vertices[0])), gl.Ptr(vertices), gl.STATIC_DRAW)
-	// Get the EBO data into a buffer too
-	gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, EBO)
-	gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, len(indices)*int(unsafe.Sizeof(indices[0])), gl.Ptr(indices), gl.STATIC_DRAW)
 	// Describe how OpenGL should interpret the vertex data by setting attributes.
 	// Set the position attribute
 	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
@@ -216,6 +258,18 @@ func main() {
 	shaderProgram.setInt("texture1", 0)
 	shaderProgram.setInt("texture2", 1)
 
+	/*
+	 * Create a model matrix, holding all the translations/scaling/rotations needed for 3D
+	 */
+	// Rotate object down to make it look like a floor
+	// Create the view matrix, for the view coordinate system
+	view := mgl32.Ident4()
+	// Move the scene back from the "camera", our viewpoint
+	view = view.Mul4(mgl32.Translate3D(0.0, 0.0, -3.0))
+	// Create the projection matrix to add perspective to the scene
+	aspectRatio := float32(initialWindowWidth) / float32(initialWindowHeight)
+	projection := mgl32.Perspective(mgl32.DegToRad(45), aspectRatio, 0.1, 100.0)
+
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
 		// Handle user input.
@@ -224,19 +278,15 @@ func main() {
 		// Perform render logic.
 		// Clear the screen with a custom color
 		gl.ClearColor(0.2, 0.3, 0.3, 1.0)
-		// Clear the color buffer (as opposed to the depth or stencil buffer)
-		gl.Clear(gl.COLOR_BUFFER_BIT)
+		// Clear the color and depth buffer (as opposed to the stencil buffer)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		// Do transform maths
-		// Create an identity matrix
-		trans := mgl32.Ident4()
-		// Translate to bottom-right side
-		translation := mgl32.Translate3D(0.5, -0.5, 0.0)
-		trans = trans.Mul4(translation)
-		// Rotate the matrix continuously
-		rotation := mgl32.HomogRotate3DZ(float32(glfw.GetTime()))
-		trans = trans.Mul4(rotation)
-		transSlice := trans[:]
+		// Apply transform matrices
+		modelLocation := gl.GetUniformLocation(shaderProgram.id, gl.Str("model"+"\x00"))
+		viewLocation := gl.GetUniformLocation(shaderProgram.id, gl.Str("view"+"\x00"))
+		gl.UniformMatrix4fv(viewLocation, 1, false, &view[0])
+		projectionLocation := gl.GetUniformLocation(shaderProgram.id, gl.Str("projection"+"\x00"))
+		gl.UniformMatrix4fv(projectionLocation, 1, false, &projection[0])
 
 		// Bind texture
 		gl.ActiveTexture(gl.TEXTURE0)
@@ -246,10 +296,15 @@ func main() {
 
 		// Render
 		shaderProgram.use()
-		transformLoc := gl.GetUniformLocation(shaderProgram.id, gl.Str("transform"+"\x00"))
-		gl.UniformMatrix4fv(transformLoc, 1, false, &transSlice[0])
 		gl.BindVertexArray(VAO)
-		gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, gl.Ptr(nil))
+		// Draw 10 cubes
+		for i := 0; i < 10; i++ {
+			model := mgl32.Ident4()
+			model = model.Mul4(mgl32.Translate3D(cubePositions[i].X(), cubePositions[i].Y(), cubePositions[i].Z()))
+			model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(20.0*float32(i)), mgl32.Vec3{1.0, 0.3, 0.5}.Normalize()))
+			gl.UniformMatrix4fv(modelLocation, 1, false, &model[0])
+			gl.DrawArrays(gl.TRIANGLES, 0, 36)
+		}
 
 		// Swap the color buffer (a large 2D buffer that contains color values for each pixel in GLFW's window) that is used to render to during this render iteration and show it as output to the screen.
 		window.SwapBuffers()

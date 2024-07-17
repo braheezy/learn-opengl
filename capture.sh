@@ -60,7 +60,8 @@ OUT_FILENAME=${1:-$(git branch --show-current)}
 if $RECORD_GIF; then
     [ -f "$OUT_DIR/$OUT_FILENAME.gif" ] && rm -f "$OUT_DIR/$OUT_FILENAME.gif"
 
-    peek
+    echo "Not supported!" >&2
+    exit 1
 else
     [ -f "$OUT_DIR/$OUT_FILENAME.png" ] && rm -f "$OUT_DIR/$OUT_FILENAME.png"
 
@@ -69,7 +70,7 @@ else
 
     # No tool can screenshot a region, so crop the region out of the screensize shot
     CROP_REGION="${WIDTH}x${HEIGHT}+$X+$Y"
-    convert "$OUT_DIR/$OUT_FILENAME.png" -crop $CROP_REGION "$OUT_DIR/$OUT_FILENAME.png"
+    magick "$OUT_DIR/$OUT_FILENAME.png" -crop $CROP_REGION "$OUT_DIR/$OUT_FILENAME.png"
 fi
 
 # Close the processes.
