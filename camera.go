@@ -114,10 +114,11 @@ func (c *Camera) processMouseScroll(yOffset float32) {
 func (c *Camera) getViewMatrix() mgl32.Mat4 {
 	// The lookAt matrix makes the camera viewpoint look at the given target
 	cameraDirection := c.position.Add(c.front)
-	return mgl32.LookAt(
-		c.position.X(), c.position.Y(), c.position.Z(),
-		cameraDirection.X(), cameraDirection.Y(), cameraDirection.Z(),
-		c.up.X(), c.up.Y(), c.up.Z(),
+
+	return lookAt(
+		c.position,
+		cameraDirection,
+		c.up,
 	)
 }
 
@@ -133,4 +134,24 @@ func (c *Camera) updateVectors() {
 	// normalize the vectors, because their length gets closer to 0 the more you look up or down which results in slower movement.
 	c.right = c.front.Cross(c.worldUp).Normalize()
 	c.up = c.right.Cross(c.front).Normalize()
+}
+
+func lookAt(cameraPosition, cameraDirection, cameraUp mgl32.Vec3) mgl32.Mat4 {
+	forward := cameraDirection.Sub(cameraPosition).Normalize()
+	right := forward.Cross(cameraUp.Normalize()).Normalize()
+	up := right.Cross(forward)
+	rotation := mgl32.Mat4{
+		right.X(), up.X(), -forward.X(), 0,
+		right.Y(), up.Y(), -forward.Y(), 0,
+		right.Z(), up.Z(), -forward.Z(), 0,
+		0, 0, 0, 1,
+	}
+	translation := mgl32.Mat4{
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+		-cameraPosition.X(), -cameraPosition.Y(), -cameraPosition.Z(), 1,
+	}
+
+	return rotation.Mul4(translation)
 }
