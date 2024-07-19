@@ -6,6 +6,7 @@ import (
 	"unsafe"
 
 	"github.com/go-gl/gl/v4.6-compatibility/gl"
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 type Shader struct {
@@ -95,4 +96,7 @@ func (s *Shader) setInt(name string, value int32) {
 
 func (s *Shader) setFloat(name string, value float32) {
 	gl.Uniform1f(gl.GetUniformLocation(s.id, gl.Str(name+"\x00")), value)
+}
+func (s *Shader) setMat4(name string, value mgl32.Mat4) {
+	gl.UniformMatrix4fv(gl.GetUniformLocation(s.id, gl.Str(name+"\x00")), 1, false, &value[0])
 }
