@@ -6,6 +6,6 @@ The [`go-gl`](https://github.com/go-gl) project is used to provide Go bindings t
 ## Repository Organization
 `main` follows the main lesson plan.
 
-There are branches like `hello-triangle-ex1` that contain solutions to exercises presented at the end of some chapters. The example give is the Exercise 1 solution for the "Hello Triangle" chapter.
+There are branches like `hello-triangle-ex1` that contain solutions to exercises presented at the end of some chapters. `hello-triangle-ex1` is the Exercise 1 solution for the "Hello Triangle" chapter.
 
-`screenshots` holds snaps of the graphics at various points in the journey. I thought it would be cool to see the visual progression over time. They are named in the order I complete that version of the program. There are commits on `main` or branches that have the code for each picture.
+[`screenshots`](./screenshots/README.md) holds snaps of the graphics at various points in the lesson.
