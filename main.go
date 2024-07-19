@@ -377,4 +377,13 @@ func processInput(w *glfw.Window) {
 	if w.GetKey(glfw.KeyD) == glfw.Press {
 		camera.processKeyboard(RIGHT, float32(deltaTime))
 	}
+
+	if w.GetKey(glfw.KeyLeftShift) == glfw.Press {
+		// Tell glfw to capture and hide the cursor
+		w.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+	}
+	if w.GetKey(glfw.KeyRightShift) == glfw.Press {
+		// Tell glfw to capture and hide the cursor
+		w.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+	}
 }
