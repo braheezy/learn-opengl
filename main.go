@@ -20,48 +20,48 @@ const (
 var (
 	// 36 points for a cube
 	vertices = []float32{
-		// positions
-		-0.5, -0.5, -0.5,
-		0.5, -0.5, -0.5,
-		0.5, 0.5, -0.5,
-		0.5, 0.5, -0.5,
-		-0.5, 0.5, -0.5,
-		-0.5, -0.5, -0.5,
+		// positions      // normals
+		-0.5, -0.5, -0.5, 0.0, 0.0, -1.0,
+		0.5, -0.5, -0.5, 0.0, 0.0, -1.0,
+		0.5, 0.5, -0.5, 0.0, 0.0, -1.0,
+		0.5, 0.5, -0.5, 0.0, 0.0, -1.0,
+		-0.5, 0.5, -0.5, 0.0, 0.0, -1.0,
+		-0.5, -0.5, -0.5, 0.0, 0.0, -1.0,
 
-		-0.5, -0.5, 0.5,
-		0.5, -0.5, 0.5,
-		0.5, 0.5, 0.5,
-		0.5, 0.5, 0.5,
-		-0.5, 0.5, 0.5,
-		-0.5, -0.5, 0.5,
+		-0.5, -0.5, 0.5, 0.0, 0.0, 1.0,
+		0.5, -0.5, 0.5, 0.0, 0.0, 1.0,
+		0.5, 0.5, 0.5, 0.0, 0.0, 1.0,
+		0.5, 0.5, 0.5, 0.0, 0.0, 1.0,
+		-0.5, 0.5, 0.5, 0.0, 0.0, 1.0,
+		-0.5, -0.5, 0.5, 0.0, 0.0, 1.0,
 
-		-0.5, 0.5, 0.5,
-		-0.5, 0.5, -0.5,
-		-0.5, -0.5, -0.5,
-		-0.5, -0.5, -0.5,
-		-0.5, -0.5, 0.5,
-		-0.5, 0.5, 0.5,
+		-0.5, 0.5, 0.5, -1.0, 0.0, 0.0,
+		-0.5, 0.5, -0.5, -1.0, 0.0, 0.0,
+		-0.5, -0.5, -0.5, -1.0, 0.0, 0.0,
+		-0.5, -0.5, -0.5, -1.0, 0.0, 0.0,
+		-0.5, -0.5, 0.5, -1.0, 0.0, 0.0,
+		-0.5, 0.5, 0.5, -1.0, 0.0, 0.0,
 
-		0.5, 0.5, 0.5,
-		0.5, 0.5, -0.5,
-		0.5, -0.5, -0.5,
-		0.5, -0.5, -0.5,
-		0.5, -0.5, 0.5,
-		0.5, 0.5, 0.5,
+		0.5, 0.5, 0.5, 1.0, 0.0, 0.0,
+		0.5, 0.5, -0.5, 1.0, 0.0, 0.0,
+		0.5, -0.5, -0.5, 1.0, 0.0, 0.0,
+		0.5, -0.5, -0.5, 1.0, 0.0, 0.0,
+		0.5, -0.5, 0.5, 1.0, 0.0, 0.0,
+		0.5, 0.5, 0.5, 1.0, 0.0, 0.0,
 
-		-0.5, -0.5, -0.5,
-		0.5, -0.5, -0.5,
-		0.5, -0.5, 0.5,
-		0.5, -0.5, 0.5,
-		-0.5, -0.5, 0.5,
-		-0.5, -0.5, -0.5,
+		-0.5, -0.5, -0.5, 0.0, -1.0, 0.0,
+		0.5, -0.5, -0.5, 0.0, -1.0, 0.0,
+		0.5, -0.5, 0.5, 0.0, -1.0, 0.0,
+		0.5, -0.5, 0.5, 0.0, -1.0, 0.0,
+		-0.5, -0.5, 0.5, 0.0, -1.0, 0.0,
+		-0.5, -0.5, -0.5, 0.0, -1.0, 0.0,
 
-		-0.5, 0.5, -0.5,
-		0.5, 0.5, -0.5,
-		0.5, 0.5, 0.5,
-		0.5, 0.5, 0.5,
-		-0.5, 0.5, 0.5,
-		-0.5, 0.5, -0.5,
+		-0.5, 0.5, -0.5, 0.0, 1.0, 0.0,
+		0.5, 0.5, -0.5, 0.0, 1.0, 0.0,
+		0.5, 0.5, 0.5, 0.0, 1.0, 0.0,
+		0.5, 0.5, 0.5, 0.0, 1.0, 0.0,
+		-0.5, 0.5, 0.5, 0.0, 1.0, 0.0,
+		-0.5, 0.5, -0.5, 0.0, 1.0, 0.0,
 	}
 	lightPosition = mgl32.Vec3{1.2, 1.0, 2.0}
 	// Track time stats related to frame speed to account for different
@@ -123,6 +123,10 @@ func main() {
 	// Listen to scroll events
 	window.SetScrollCallback(scrollCallback)
 
+	if enableWireframe {
+		gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
+	}
+
 	/*
 	 * Load OS-specific OpenGL function pointers
 	 */
@@ -172,8 +176,11 @@ func main() {
 
 	gl.BindVertexArray(cubeVAO)
 	// Set the position attribute
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(3*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(6*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
 	gl.EnableVertexAttribArray(0)
+	// Set the normal attribute
+	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, int32(6*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
+	gl.EnableVertexAttribArray(1)
 
 	// For the light cube
 	var lightVAO uint32
@@ -182,12 +189,8 @@ func main() {
 	// only need to bind VBO, not refill it with data
 	gl.BindBuffer(gl.ARRAY_BUFFER, VBO)
 	// Set the position attribute
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(3*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(6*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
 	gl.EnableVertexAttribArray(0)
-
-	if enableWireframe {
-		gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
-	}
 
 	aspectRatio := float32(initialWindowWidth) / float32(initialWindowHeight)
 
@@ -210,6 +213,8 @@ func main() {
 		shaderProgram.use()
 		shaderProgram.setVec3("objectColor", mgl32.Vec3{1.0, 0.5, 0.31})
 		shaderProgram.setVec3("lightColor", mgl32.Vec3{1.0, 1.0, 1.0})
+		shaderProgram.setVec3("lightPos", lightPosition)
+		shaderProgram.setVec3("viewPos", camera.position)
 
 		// view/projection transformations
 		// Create the projection matrix to add perspective to the scene
