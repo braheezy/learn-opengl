@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"math"
 	"runtime"
 	"unsafe"
 
@@ -208,6 +209,8 @@ func main() {
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
 		// Clear the color and depth buffer (as opposed to the stencil buffer)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+		lightPosition[0] = float32(math.Sin(glfw.GetTime()) * 3.0)
 
 		// Activate shaders
 		shaderProgram.use()
