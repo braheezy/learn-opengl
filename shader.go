@@ -100,3 +100,6 @@ func (s *Shader) setFloat(name string, value float32) {
 func (s *Shader) setMat4(name string, value mgl32.Mat4) {
 	gl.UniformMatrix4fv(gl.GetUniformLocation(s.id, gl.Str(name+"\x00")), 1, false, &value[0])
 }
+func (s *Shader) setVec3(name string, value mgl32.Vec3) {
+	gl.Uniform3fv(gl.GetUniformLocation(s.id, gl.Str(name+"\x00")), 1, &value[0])
+}
