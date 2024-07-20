@@ -31,7 +31,7 @@ type Camera struct {
 	zoom             float32
 }
 
-func NewCameraWithDefaults() *Camera {
+func newCamera() *Camera {
 	c := Camera{
 		position:         mgl32.Vec3{0.0, 0.0, 0.0},
 		worldUp:          mgl32.Vec3{0.0, 1.0, 0.0},
@@ -42,12 +42,28 @@ func NewCameraWithDefaults() *Camera {
 		mouseSensitivity: 0.1,
 		movementSpeed:    2.5,
 	}
-	c.updateVectors()
 	return &c
 }
 
+func NewDefaultCamera() *Camera {
+	c := newCamera()
+
+	c.updateVectors()
+	return c
+}
+
+func NewDefaultCameraAtPosition(position mgl32.Vec3) *Camera {
+	c := newCamera()
+
+	c.position = position
+
+	c.updateVectors()
+	return c
+}
+
 func NewCamera(position mgl32.Vec3, up mgl32.Vec3, yaw float32, pitch float32) *Camera {
-	c := NewCameraWithDefaults()
+	c := newCamera()
+
 	c.position = position
 	c.up = up
 	c.yaw = yaw
@@ -58,7 +74,8 @@ func NewCamera(position mgl32.Vec3, up mgl32.Vec3, yaw float32, pitch float32) *
 }
 
 func NewCameraWithScalars(posX, posY, posZ, upX, upY, upZ, yaw, pitch float32) *Camera {
-	c := NewCameraWithDefaults()
+	c := newCamera()
+
 	c.position = mgl32.Vec3{posX, posY, posZ}
 	c.up = mgl32.Vec3{upX, upY, upZ}
 	c.yaw = yaw

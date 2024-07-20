@@ -81,8 +81,7 @@ func init() {
 	// This is needed to arrange that main() runs on main thread.
 	runtime.LockOSThread()
 
-	camera = NewCameraWithDefaults()
-	camera.position = mgl32.Vec3{1.0, 0.5, 4.0}
+	camera = NewDefaultCameraAtPosition(mgl32.Vec3{1.0, 0.5, 4.0})
 }
 
 func main() {
@@ -210,14 +209,25 @@ func main() {
 		// Clear the color and depth buffer (as opposed to the stencil buffer)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		lightPosition[0] = float32(math.Sin(glfw.GetTime()) * 3.0)
-
 		// Activate shaders
 		shaderProgram.use()
-		shaderProgram.setVec3("objectColor", mgl32.Vec3{1.0, 0.5, 0.31})
-		shaderProgram.setVec3("lightColor", mgl32.Vec3{1.0, 1.0, 1.0})
-		shaderProgram.setVec3("lightPos", lightPosition)
+		shaderProgram.setVec3("light.position", lightPosition)
 		shaderProgram.setVec3("viewPos", camera.position)
+		shaderProgram.setVec3("material.ambient", mgl32.Vec3{1.0, 0.5, 0.31})
+		shaderProgram.setVec3("material.diffuse", mgl32.Vec3{1.0, 0.5, 0.31})
+		shaderProgram.setVec3("material.specular", mgl32.Vec3{0.5, 0.5, 0.5})
+		shaderProgram.setFloat("material.shininess", 32.0)
+
+		lightColor := mgl32.Vec3{
+			float32(math.Sin(glfw.GetTime() * 2.0)),
+			float32(math.Sin(glfw.GetTime() * 0.7)),
+			float32(math.Sin(glfw.GetTime() * 1.3)),
+		}
+		diffuseColor := lightColor.Mul(0.5)
+		ambientColor := diffuseColor.Mul(0.2)
+		shaderProgram.setVec3("light.ambient", ambientColor)
+		shaderProgram.setVec3("light.diffuse", diffuseColor)
+		shaderProgram.setVec3("light.specular", mgl32.Vec3{1.0, 1.0, 1.0})
 
 		// view/projection transformations
 		// Create the projection matrix to add perspective to the scene
@@ -303,7 +313,10 @@ func processInput(w *glfw.Window) {
 		w.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
 	}
 	if w.GetKey(glfw.KeyRightShift) == glfw.Press {
-		// Tell glfw to capture and hide the cursor
+		// Tell glfw to show and stop capturing cursor
 		w.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+	}
+	if w.GetKey(glfw.KeySpace) == glfw.Press {
+		camera = NewDefaultCameraAtPosition(mgl32.Vec3{1.0, 0.5, 4.0})
 	}
 }
