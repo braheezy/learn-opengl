@@ -1,8 +1,9 @@
 package main
 
 import (
+	"image/png"
 	"log"
-	"math"
+	"os"
 	"runtime"
 	"unsafe"
 
@@ -21,48 +22,48 @@ const (
 var (
 	// 36 points for a cube
 	vertices = []float32{
-		// positions      // normals
-		-0.5, -0.5, -0.5, 0.0, 0.0, -1.0,
-		0.5, -0.5, -0.5, 0.0, 0.0, -1.0,
-		0.5, 0.5, -0.5, 0.0, 0.0, -1.0,
-		0.5, 0.5, -0.5, 0.0, 0.0, -1.0,
-		-0.5, 0.5, -0.5, 0.0, 0.0, -1.0,
-		-0.5, -0.5, -0.5, 0.0, 0.0, -1.0,
+		// positions      // normals     // texture coords
+		-0.5, -0.5, -0.5, 0.0, 0.0, -1.0, 0.0, 0.0,
+		0.5, -0.5, -0.5, 0.0, 0.0, -1.0, 1.0, 0.0,
+		0.5, 0.5, -0.5, 0.0, 0.0, -1.0, 1.0, 1.0,
+		0.5, 0.5, -0.5, 0.0, 0.0, -1.0, 1.0, 1.0,
+		-0.5, 0.5, -0.5, 0.0, 0.0, -1.0, 0.0, 1.0,
+		-0.5, -0.5, -0.5, 0.0, 0.0, -1.0, 0.0, 0.0,
 
-		-0.5, -0.5, 0.5, 0.0, 0.0, 1.0,
-		0.5, -0.5, 0.5, 0.0, 0.0, 1.0,
-		0.5, 0.5, 0.5, 0.0, 0.0, 1.0,
-		0.5, 0.5, 0.5, 0.0, 0.0, 1.0,
-		-0.5, 0.5, 0.5, 0.0, 0.0, 1.0,
-		-0.5, -0.5, 0.5, 0.0, 0.0, 1.0,
+		-0.5, -0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 0.0,
+		0.5, -0.5, 0.5, 0.0, 0.0, 1.0, 1.0, 0.0,
+		0.5, 0.5, 0.5, 0.0, 0.0, 1.0, 1.0, 1.0,
+		0.5, 0.5, 0.5, 0.0, 0.0, 1.0, 1.0, 1.0,
+		-0.5, 0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 1.0,
+		-0.5, -0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 0.0,
 
-		-0.5, 0.5, 0.5, -1.0, 0.0, 0.0,
-		-0.5, 0.5, -0.5, -1.0, 0.0, 0.0,
-		-0.5, -0.5, -0.5, -1.0, 0.0, 0.0,
-		-0.5, -0.5, -0.5, -1.0, 0.0, 0.0,
-		-0.5, -0.5, 0.5, -1.0, 0.0, 0.0,
-		-0.5, 0.5, 0.5, -1.0, 0.0, 0.0,
+		-0.5, 0.5, 0.5, -1.0, 0.0, 0.0, 1.0, 0.0,
+		-0.5, 0.5, -0.5, -1.0, 0.0, 0.0, 1.0, 1.0,
+		-0.5, -0.5, -0.5, -1.0, 0.0, 0.0, 0.0, 1.0,
+		-0.5, -0.5, -0.5, -1.0, 0.0, 0.0, 0.0, 1.0,
+		-0.5, -0.5, 0.5, -1.0, 0.0, 0.0, 0.0, 0.0,
+		-0.5, 0.5, 0.5, -1.0, 0.0, 0.0, 1.0, 0.0,
 
-		0.5, 0.5, 0.5, 1.0, 0.0, 0.0,
-		0.5, 0.5, -0.5, 1.0, 0.0, 0.0,
-		0.5, -0.5, -0.5, 1.0, 0.0, 0.0,
-		0.5, -0.5, -0.5, 1.0, 0.0, 0.0,
-		0.5, -0.5, 0.5, 1.0, 0.0, 0.0,
-		0.5, 0.5, 0.5, 1.0, 0.0, 0.0,
+		0.5, 0.5, 0.5, 1.0, 0.0, 0.0, 1.0, 0.0,
+		0.5, 0.5, -0.5, 1.0, 0.0, 0.0, 1.0, 1.0,
+		0.5, -0.5, -0.5, 1.0, 0.0, 0.0, 0.0, 1.0,
+		0.5, -0.5, -0.5, 1.0, 0.0, 0.0, 0.0, 1.0,
+		0.5, -0.5, 0.5, 1.0, 0.0, 0.0, 0.0, 0.0,
+		0.5, 0.5, 0.5, 1.0, 0.0, 0.0, 1.0, 0.0,
 
-		-0.5, -0.5, -0.5, 0.0, -1.0, 0.0,
-		0.5, -0.5, -0.5, 0.0, -1.0, 0.0,
-		0.5, -0.5, 0.5, 0.0, -1.0, 0.0,
-		0.5, -0.5, 0.5, 0.0, -1.0, 0.0,
-		-0.5, -0.5, 0.5, 0.0, -1.0, 0.0,
-		-0.5, -0.5, -0.5, 0.0, -1.0, 0.0,
+		-0.5, -0.5, -0.5, 0.0, -1.0, 0.0, 0.0, 1.0,
+		0.5, -0.5, -0.5, 0.0, -1.0, 0.0, 1.0, 1.0,
+		0.5, -0.5, 0.5, 0.0, -1.0, 0.0, 1.0, 0.0,
+		0.5, -0.5, 0.5, 0.0, -1.0, 0.0, 1.0, 0.0,
+		-0.5, -0.5, 0.5, 0.0, -1.0, 0.0, 0.0, 0.0,
+		-0.5, -0.5, -0.5, 0.0, -1.0, 0.0, 0.0, 1.0,
 
-		-0.5, 0.5, -0.5, 0.0, 1.0, 0.0,
-		0.5, 0.5, -0.5, 0.0, 1.0, 0.0,
-		0.5, 0.5, 0.5, 0.0, 1.0, 0.0,
-		0.5, 0.5, 0.5, 0.0, 1.0, 0.0,
-		-0.5, 0.5, 0.5, 0.0, 1.0, 0.0,
-		-0.5, 0.5, -0.5, 0.0, 1.0, 0.0,
+		-0.5, 0.5, -0.5, 0.0, 1.0, 0.0, 0.0, 1.0,
+		0.5, 0.5, -0.5, 0.0, 1.0, 0.0, 1.0, 1.0,
+		0.5, 0.5, 0.5, 0.0, 1.0, 0.0, 1.0, 0.0,
+		0.5, 0.5, 0.5, 0.0, 1.0, 0.0, 1.0, 0.0,
+		-0.5, 0.5, 0.5, 0.0, 1.0, 0.0, 0.0, 0.0,
+		-0.5, 0.5, -0.5, 0.0, 1.0, 0.0, 0.0, 1.0,
 	}
 	lightPosition = mgl32.Vec3{1.2, 1.0, 2.0}
 	// Track time stats related to frame speed to account for different
@@ -176,11 +177,14 @@ func main() {
 
 	gl.BindVertexArray(cubeVAO)
 	// Set the position attribute
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(6*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
 	gl.EnableVertexAttribArray(0)
 	// Set the normal attribute
-	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, int32(6*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
+	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
 	gl.EnableVertexAttribArray(1)
+	// Set the texture attribute
+	gl.VertexAttribPointer(2, 2, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(6*unsafe.Sizeof(float32(0))))
+	gl.EnableVertexAttribArray(2)
 
 	// For the light cube
 	var lightVAO uint32
@@ -189,10 +193,17 @@ func main() {
 	// only need to bind VBO, not refill it with data
 	gl.BindBuffer(gl.ARRAY_BUFFER, VBO)
 	// Set the position attribute
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(6*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
 	gl.EnableVertexAttribArray(0)
 
 	aspectRatio := float32(initialWindowWidth) / float32(initialWindowHeight)
+
+	diffuseMap := loadTextures("assets/container2.png")
+	specularMap := loadTextures("assets/container2_specular.png")
+
+	shaderProgram.use()
+	shaderProgram.setInt("material.diffuse", 0)
+	shaderProgram.setInt("material.specular", 1)
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -213,21 +224,15 @@ func main() {
 		shaderProgram.use()
 		shaderProgram.setVec3("light.position", lightPosition)
 		shaderProgram.setVec3("viewPos", camera.position)
-		shaderProgram.setVec3("material.ambient", mgl32.Vec3{1.0, 0.5, 0.31})
-		shaderProgram.setVec3("material.diffuse", mgl32.Vec3{1.0, 0.5, 0.31})
-		shaderProgram.setVec3("material.specular", mgl32.Vec3{0.5, 0.5, 0.5})
-		shaderProgram.setFloat("material.shininess", 32.0)
 
-		lightColor := mgl32.Vec3{
-			float32(math.Sin(glfw.GetTime() * 2.0)),
-			float32(math.Sin(glfw.GetTime() * 0.7)),
-			float32(math.Sin(glfw.GetTime() * 1.3)),
-		}
-		diffuseColor := lightColor.Mul(0.5)
-		ambientColor := diffuseColor.Mul(0.2)
-		shaderProgram.setVec3("light.ambient", ambientColor)
-		shaderProgram.setVec3("light.diffuse", diffuseColor)
+		// light properties
+		shaderProgram.setVec3("light.ambient", mgl32.Vec3{0.2, 0.2, 0.2})
+		shaderProgram.setVec3("light.diffuse", mgl32.Vec3{0.5, 0.5, 0.5})
 		shaderProgram.setVec3("light.specular", mgl32.Vec3{1.0, 1.0, 1.0})
+
+		// material properties
+		shaderProgram.setVec3("material.specular", mgl32.Vec3{0.5, 0.5, 0.5})
+		shaderProgram.setFloat("material.shininess", 64.0)
 
 		// view/projection transformations
 		// Create the projection matrix to add perspective to the scene
@@ -239,6 +244,12 @@ func main() {
 		// world transformation
 		model := mgl32.Ident4()
 		shaderProgram.setMat4("model", model)
+
+		// bind diffuse map
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_2D, diffuseMap)
+		gl.ActiveTexture(gl.TEXTURE1)
+		gl.BindTexture(gl.TEXTURE_2D, specularMap)
 
 		// Render cube
 		gl.BindVertexArray(cubeVAO)
@@ -319,4 +330,50 @@ func processInput(w *glfw.Window) {
 	if w.GetKey(glfw.KeySpace) == glfw.Press {
 		camera = NewDefaultCameraAtPosition(mgl32.Vec3{1.0, 0.5, 4.0})
 	}
+}
+
+func loadTextures(filePath string) uint32 {
+	/*
+	 * load and create a texture
+	 */
+	var texture uint32
+	gl.GenTextures(1, &texture)
+	gl.BindTexture(gl.TEXTURE_2D, texture)
+	// Set texture options
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	textureFile, err := os.Open(filePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	textureImage, err := png.Decode(textureFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	textureFile.Close()
+	bounds := textureImage.Bounds()
+	// Create a slice to hold the pixel data
+	pixelData := make([]byte, bounds.Dx()*bounds.Dy()*4)
+
+	// Convert the image to RGB and copy the pixel data to the slice
+	index := 0
+	for y := bounds.Max.Y - 1; y >= bounds.Min.Y; y-- {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, _ := textureImage.At(x, y).RGBA()
+			pixelData[index] = byte(r >> 8)   // Red
+			pixelData[index+1] = byte(g >> 8) // Green
+			pixelData[index+2] = byte(b >> 8) // Blue
+			pixelData[index+3] = byte(b >> 8) // Alpha
+			index += 4
+		}
+	}
+
+	// Generate texture from image data
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, int32(textureImage.Bounds().Dx()), int32(textureImage.Bounds().Dy()), 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(pixelData))
+	// Generate mipmap, handling various resolutions of the texture at different distances.
+	gl.GenerateMipmap(gl.TEXTURE_2D)
+
+	return texture
 }
