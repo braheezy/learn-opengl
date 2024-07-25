@@ -3,6 +3,7 @@ package main
 import (
 	"image/png"
 	"log"
+	"math"
 	"os"
 	"runtime"
 	"unsafe"
@@ -65,6 +66,19 @@ var (
 		-0.5, 0.5, 0.5, 0.0, 1.0, 0.0, 0.0, 0.0,
 		-0.5, 0.5, -0.5, 0.0, 1.0, 0.0, 0.0, 1.0,
 	}
+	cubePositions = []mgl32.Vec3{
+		{0.0, 0.0, 0.0},
+		{2.0, 5.0, -15.0},
+		{-1.5, -2.2, -2.5},
+		{-3.8, -2.0, -12.3},
+		{2.4, -0.4, -3.5},
+		{-1.7, 3.0, -7.5},
+		{1.3, -2.0, -2.5},
+		{1.5, 2.0, -2.5},
+		{1.5, 0.2, -1.5},
+		{-1.3, 1.0, -1.5},
+	}
+	// Vertex array object
 	lightPosition = mgl32.Vec3{1.2, 1.0, 2.0}
 	// Track time stats related to frame speed to account for different
 	// computer performance
@@ -146,10 +160,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	lightShaderProgram, err := NewShader("shaders/shader.vs", "shaders/light.fs")
-	if err != nil {
-		log.Fatal(err)
-	}
+	// lightShaderProgram, err := NewShader("shaders/shader.vs", "shaders/light.fs")
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
 
 	/*
 	 * set up vertex data (and buffer(s)) and configure vertex attributes
@@ -222,17 +236,23 @@ func main() {
 
 		// Activate shaders
 		shaderProgram.use()
-		shaderProgram.setVec3("light.position", lightPosition)
+		shaderProgram.setVec3("light.position", camera.position)
+		shaderProgram.setVec3("light.direction", camera.front)
+		shaderProgram.setFloat("light.cutoff", float32(math.Cos(float64(mgl32.DegToRad(12.5)))))
+		shaderProgram.setFloat("light.outerCutoff", float32(math.Cos(float64(mgl32.DegToRad(17.5)))))
 		shaderProgram.setVec3("viewPos", camera.position)
 
 		// light properties
-		shaderProgram.setVec3("light.ambient", mgl32.Vec3{0.2, 0.2, 0.2})
-		shaderProgram.setVec3("light.diffuse", mgl32.Vec3{0.5, 0.5, 0.5})
+		shaderProgram.setVec3("light.ambient", mgl32.Vec3{0.1, 0.1, 0.1})
+		shaderProgram.setVec3("light.diffuse", mgl32.Vec3{0.8, 0.8, 0.8})
 		shaderProgram.setVec3("light.specular", mgl32.Vec3{1.0, 1.0, 1.0})
+		shaderProgram.setFloat("light.constant", 1.0)
+		shaderProgram.setFloat("light.linear", 0.09)
+		shaderProgram.setFloat("light.quadratic", 0.032)
 
 		// material properties
-		shaderProgram.setVec3("material.specular", mgl32.Vec3{0.5, 0.5, 0.5})
-		shaderProgram.setFloat("material.shininess", 64.0)
+		// shaderProgram.setVec3("material.specular", mgl32.Vec3{0.5, 0.5, 0.5})
+		shaderProgram.setFloat("material.shininess", 32.0)
 
 		// view/projection transformations
 		// Create the projection matrix to add perspective to the scene
@@ -248,22 +268,30 @@ func main() {
 		// bind diffuse map
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.BindTexture(gl.TEXTURE_2D, diffuseMap)
+		// bind specular map
 		gl.ActiveTexture(gl.TEXTURE1)
 		gl.BindTexture(gl.TEXTURE_2D, specularMap)
 
-		// Render cube
+		// Render cubes
 		gl.BindVertexArray(cubeVAO)
-		gl.DrawArrays(gl.TRIANGLES, 0, 36)
+		for i := 0; i < 10; i++ {
+			model = mgl32.Ident4().Mul4(mgl32.Translate3D(cubePositions[i][0], cubePositions[i][1], cubePositions[i][2]))
+			angle := 20.0 * float32(i)
+			model = model.Mul4(mgl32.HomogRotate3D(angle, mgl32.Vec3{1.0, 0.3, 0.5}))
+			shaderProgram.setMat4("model", model)
+			gl.DrawArrays(gl.TRIANGLES, 0, 36)
+
+		}
 
 		// Draw light cube
-		lightShaderProgram.use()
-		lightShaderProgram.setMat4("projection", projection)
-		lightShaderProgram.setMat4("view", view)
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(lightPosition.X(), lightPosition.Y(), lightPosition.Z()))
-		model = model.Mul4(mgl32.Scale3D(0.2, 0.2, 0.2))
-		lightShaderProgram.setMat4("model", model)
-		gl.BindVertexArray(lightVAO)
-		gl.DrawArrays(gl.TRIANGLES, 0, 36)
+		// lightShaderProgram.use()
+		// lightShaderProgram.setMat4("projection", projection)
+		// lightShaderProgram.setMat4("view", view)
+		// model = mgl32.Ident4().Mul4(mgl32.Translate3D(lightPosition.X(), lightPosition.Y(), lightPosition.Z()))
+		// model = model.Mul4(mgl32.Scale3D(0.2, 0.2, 0.2))
+		// lightShaderProgram.setMat4("model", model)
+		// gl.BindVertexArray(lightVAO)
+		// gl.DrawArrays(gl.TRIANGLES, 0, 36)
 
 		// Swap the color buffer (a large 2D buffer that contains color values for each pixel in GLFW's window) that is used to render to during this render iteration and show it as output to the screen.
 		window.SwapBuffers()
