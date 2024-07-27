@@ -5,7 +5,7 @@ import (
 	"os"
 	"unsafe"
 
-	"github.com/go-gl/gl/v4.6-compatibility/gl"
+	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 

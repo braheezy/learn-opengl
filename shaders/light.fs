@@ -1,4 +1,4 @@
-#version 460 compatibility
+#version 410 core
 
 out vec4 FragColor;
 

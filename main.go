@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image/png"
 	"log"
 	"math"
@@ -8,7 +9,7 @@ import (
 	"runtime"
 	"unsafe"
 
-	"github.com/go-gl/gl/v4.6-compatibility/gl"
+	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -78,8 +79,12 @@ var (
 		{1.5, 0.2, -1.5},
 		{-1.3, 1.0, -1.5},
 	}
-	// Vertex array object
-	lightPosition = mgl32.Vec3{1.2, 1.0, 2.0}
+	pointLightPositions = []mgl32.Vec3{
+		{0.7, 0.2, 2.0},
+		{2.3, -3.3, -4.0},
+		{-4.0, 2.0, -12.0},
+		{0.0, 0.0, -3.0},
+	}
 	// Track time stats related to frame speed to account for different
 	// computer performance
 	deltaTime = 0.0 // time between current frame and last frame
@@ -160,10 +165,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// lightShaderProgram, err := NewShader("shaders/shader.vs", "shaders/light.fs")
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+	lightShaderProgram, err := NewShader("shaders/shader.vs", "shaders/light.fs")
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	/*
 	 * set up vertex data (and buffer(s)) and configure vertex attributes
@@ -236,23 +241,39 @@ func main() {
 
 		// Activate shaders
 		shaderProgram.use()
+		shaderProgram.setVec3("viewPos", camera.position)
+		shaderProgram.setFloat("material.shininess", 32.0)
 		shaderProgram.setVec3("light.position", camera.position)
-		shaderProgram.setVec3("light.direction", camera.front)
 		shaderProgram.setFloat("light.cutoff", float32(math.Cos(float64(mgl32.DegToRad(12.5)))))
 		shaderProgram.setFloat("light.outerCutoff", float32(math.Cos(float64(mgl32.DegToRad(17.5)))))
-		shaderProgram.setVec3("viewPos", camera.position)
 
-		// light properties
-		shaderProgram.setVec3("light.ambient", mgl32.Vec3{0.1, 0.1, 0.1})
-		shaderProgram.setVec3("light.diffuse", mgl32.Vec3{0.8, 0.8, 0.8})
-		shaderProgram.setVec3("light.specular", mgl32.Vec3{1.0, 1.0, 1.0})
-		shaderProgram.setFloat("light.constant", 1.0)
-		shaderProgram.setFloat("light.linear", 0.09)
-		shaderProgram.setFloat("light.quadratic", 0.032)
-
-		// material properties
-		// shaderProgram.setVec3("material.specular", mgl32.Vec3{0.5, 0.5, 0.5})
-		shaderProgram.setFloat("material.shininess", 32.0)
+		// directional light
+		shaderProgram.setVec3("dirLight.direction", mgl32.Vec3{-0.2, -1.0, -0.3})
+		shaderProgram.setVec3("dirLight.ambient", mgl32.Vec3{0.05, 0.05, 0.05})
+		shaderProgram.setVec3("dirLight.diffuse", mgl32.Vec3{0.4, 0.4, 0.4})
+		shaderProgram.setVec3("dirLight.specular", mgl32.Vec3{0.5, 0.5, 0.5})
+		// point lights
+		for i := 0; i < 4; i++ {
+			target := fmt.Sprintf("pointLights[%v]", i)
+			shaderProgram.setVec3(fmt.Sprintf("%v.%v", target, "position"), pointLightPositions[i])
+			shaderProgram.setVec3(fmt.Sprintf("%v.%v", target, "ambient"), mgl32.Vec3{0.05, 0.05, 0.05})
+			shaderProgram.setVec3(fmt.Sprintf("%v.%v", target, "diffuse"), mgl32.Vec3{0.8, 0.8, 0.8})
+			shaderProgram.setVec3(fmt.Sprintf("%v.%v", target, "specular"), mgl32.Vec3{1.0, 1.0, 1.0})
+			shaderProgram.setFloat(fmt.Sprintf("%v.%v", target, "constant"), 1.0)
+			shaderProgram.setFloat(fmt.Sprintf("%v.%v", target, "linear"), 0.09)
+			shaderProgram.setFloat(fmt.Sprintf("%v.%v", target, "quadratic"), 0.032)
+		}
+		// spotlight
+		shaderProgram.setVec3("spotlight.position", camera.position)
+		shaderProgram.setVec3("spotlight.direction", camera.front)
+		shaderProgram.setFloat("spotlight.cutOff", float32(math.Cos(float64(mgl32.DegToRad(12.5)))))
+		shaderProgram.setFloat("spotlight.outerCutOff", float32(math.Cos(float64(mgl32.DegToRad(17.5)))))
+		shaderProgram.setVec3("spotlight.ambient", mgl32.Vec3{0.0, 0.0, 0.0})
+		shaderProgram.setVec3("spotlight.diffuse", mgl32.Vec3{1.0, 1.0, 1.0})
+		shaderProgram.setVec3("spotlight.specular", mgl32.Vec3{1.0, 1.0, 1.0})
+		shaderProgram.setFloat("spotlight.constant", 1.0)
+		shaderProgram.setFloat("spotlight.linear", 0.09)
+		shaderProgram.setFloat("spotlight.quadratic", 0.032)
 
 		// view/projection transformations
 		// Create the projection matrix to add perspective to the scene
@@ -283,15 +304,18 @@ func main() {
 
 		}
 
-		// Draw light cube
-		// lightShaderProgram.use()
-		// lightShaderProgram.setMat4("projection", projection)
-		// lightShaderProgram.setMat4("view", view)
-		// model = mgl32.Ident4().Mul4(mgl32.Translate3D(lightPosition.X(), lightPosition.Y(), lightPosition.Z()))
-		// model = model.Mul4(mgl32.Scale3D(0.2, 0.2, 0.2))
-		// lightShaderProgram.setMat4("model", model)
-		// gl.BindVertexArray(lightVAO)
-		// gl.DrawArrays(gl.TRIANGLES, 0, 36)
+		// Draw light cubes
+		lightShaderProgram.use()
+		lightShaderProgram.setMat4("projection", projection)
+		lightShaderProgram.setMat4("view", view)
+		gl.BindVertexArray(lightVAO)
+
+		for i := 0; i < 4; i++ {
+			model = mgl32.Ident4().Mul4(mgl32.Translate3D(pointLightPositions[i].X(), pointLightPositions[i].Y(), pointLightPositions[i].Z()))
+			model = model.Mul4(mgl32.Scale3D(0.2, 0.2, 0.2))
+			lightShaderProgram.setMat4("model", model)
+			gl.DrawArrays(gl.TRIANGLES, 0, 36)
+		}
 
 		// Swap the color buffer (a large 2D buffer that contains color values for each pixel in GLFW's window) that is used to render to during this render iteration and show it as output to the screen.
 		window.SwapBuffers()
