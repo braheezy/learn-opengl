@@ -1,13 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"image/png"
 	"log"
-	"math"
 	"os"
 	"runtime"
-	"unsafe"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -22,69 +19,6 @@ const (
 )
 
 var (
-	// 36 points for a cube
-	vertices = []float32{
-		// positions      // normals     // texture coords
-		-0.5, -0.5, -0.5, 0.0, 0.0, -1.0, 0.0, 0.0,
-		0.5, -0.5, -0.5, 0.0, 0.0, -1.0, 1.0, 0.0,
-		0.5, 0.5, -0.5, 0.0, 0.0, -1.0, 1.0, 1.0,
-		0.5, 0.5, -0.5, 0.0, 0.0, -1.0, 1.0, 1.0,
-		-0.5, 0.5, -0.5, 0.0, 0.0, -1.0, 0.0, 1.0,
-		-0.5, -0.5, -0.5, 0.0, 0.0, -1.0, 0.0, 0.0,
-
-		-0.5, -0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 0.0,
-		0.5, -0.5, 0.5, 0.0, 0.0, 1.0, 1.0, 0.0,
-		0.5, 0.5, 0.5, 0.0, 0.0, 1.0, 1.0, 1.0,
-		0.5, 0.5, 0.5, 0.0, 0.0, 1.0, 1.0, 1.0,
-		-0.5, 0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 1.0,
-		-0.5, -0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 0.0,
-
-		-0.5, 0.5, 0.5, -1.0, 0.0, 0.0, 1.0, 0.0,
-		-0.5, 0.5, -0.5, -1.0, 0.0, 0.0, 1.0, 1.0,
-		-0.5, -0.5, -0.5, -1.0, 0.0, 0.0, 0.0, 1.0,
-		-0.5, -0.5, -0.5, -1.0, 0.0, 0.0, 0.0, 1.0,
-		-0.5, -0.5, 0.5, -1.0, 0.0, 0.0, 0.0, 0.0,
-		-0.5, 0.5, 0.5, -1.0, 0.0, 0.0, 1.0, 0.0,
-
-		0.5, 0.5, 0.5, 1.0, 0.0, 0.0, 1.0, 0.0,
-		0.5, 0.5, -0.5, 1.0, 0.0, 0.0, 1.0, 1.0,
-		0.5, -0.5, -0.5, 1.0, 0.0, 0.0, 0.0, 1.0,
-		0.5, -0.5, -0.5, 1.0, 0.0, 0.0, 0.0, 1.0,
-		0.5, -0.5, 0.5, 1.0, 0.0, 0.0, 0.0, 0.0,
-		0.5, 0.5, 0.5, 1.0, 0.0, 0.0, 1.0, 0.0,
-
-		-0.5, -0.5, -0.5, 0.0, -1.0, 0.0, 0.0, 1.0,
-		0.5, -0.5, -0.5, 0.0, -1.0, 0.0, 1.0, 1.0,
-		0.5, -0.5, 0.5, 0.0, -1.0, 0.0, 1.0, 0.0,
-		0.5, -0.5, 0.5, 0.0, -1.0, 0.0, 1.0, 0.0,
-		-0.5, -0.5, 0.5, 0.0, -1.0, 0.0, 0.0, 0.0,
-		-0.5, -0.5, -0.5, 0.0, -1.0, 0.0, 0.0, 1.0,
-
-		-0.5, 0.5, -0.5, 0.0, 1.0, 0.0, 0.0, 1.0,
-		0.5, 0.5, -0.5, 0.0, 1.0, 0.0, 1.0, 1.0,
-		0.5, 0.5, 0.5, 0.0, 1.0, 0.0, 1.0, 0.0,
-		0.5, 0.5, 0.5, 0.0, 1.0, 0.0, 1.0, 0.0,
-		-0.5, 0.5, 0.5, 0.0, 1.0, 0.0, 0.0, 0.0,
-		-0.5, 0.5, -0.5, 0.0, 1.0, 0.0, 0.0, 1.0,
-	}
-	cubePositions = []mgl32.Vec3{
-		{0.0, 0.0, 0.0},
-		{2.0, 5.0, -15.0},
-		{-1.5, -2.2, -2.5},
-		{-3.8, -2.0, -12.3},
-		{2.4, -0.4, -3.5},
-		{-1.7, 3.0, -7.5},
-		{1.3, -2.0, -2.5},
-		{1.5, 2.0, -2.5},
-		{1.5, 0.2, -1.5},
-		{-1.3, 1.0, -1.5},
-	}
-	pointLightPositions = []mgl32.Vec3{
-		{0.7, 0.2, 2.0},
-		{2.3, -3.3, -4.0},
-		{-4.0, 2.0, -12.0},
-		{0.0, 0.0, -3.0},
-	}
 	// Track time stats related to frame speed to account for different
 	// computer performance
 	deltaTime = 0.0 // time between current frame and last frame
@@ -118,9 +52,9 @@ func main() {
 	defer glfw.Terminate()
 	// Using hints, set various options for the window we're about to create.
 	glfw.WindowHint(glfw.ContextVersionMajor, 4)
-	glfw.WindowHint(glfw.ContextVersionMinor, 6)
+	glfw.WindowHint(glfw.ContextVersionMinor, 1)
 	// Compatibility profile allows more deprecated function calls over core profile.
-	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCompatProfile)
+	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
 
 	/*
 	 * GLFW window creation
@@ -137,7 +71,7 @@ func main() {
 	// Set the function that is run every time the viewport is resized by the user.
 	window.SetFramebufferSizeCallback(framebufferSizeCallback)
 	// Tell glfw to capture and hide the cursor
-	window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+	// window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
 	// Listen to mouse events
 	window.SetCursorPosCallback(mouseCallback)
 	// Listen to scroll events
@@ -165,64 +99,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	lightShaderProgram, err := NewShader("shaders/shader.vs", "shaders/light.fs")
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	/*
-	 * set up vertex data (and buffer(s)) and configure vertex attributes
-	 *
-	 * A graphics pipeline are the stages taken to determine how to paint 2D pixels
-	 * according to 3D coordinates. The stages are individual programs called shaders.
-	 *
-	 * The vertex shader is the first shader. It takes as input a single vertex and transforms
-	 * it to other 3D coordinates. OpenGL expects a vertex and fragment shader.
+	* load models
 	 */
-	// Manage the memory in the GPU with a vertex buffer object (VBO) where many
-	// vertices can be give to the GPU at once.
-	var VBO uint32
-	// Store vertex attributes for each object in the VBO in a vertex array object (cubeVAO)
-	var cubeVAO uint32
-	// Get a unique ID for buffers.
-	gl.GenVertexArrays(1, &cubeVAO)
-	gl.GenBuffers(1, &VBO)
-	// Then bind VBO(s) and attribute pointers
-	// Bind it as a ARRAY_BUFFER, allowing different typed buffers to bind.
-	gl.BindBuffer(gl.ARRAY_BUFFER, VBO)
-	// Get the vertex data into the buffer
-	// STATIC_DRAW: the data is set only once and used many times.
-	gl.BufferData(gl.ARRAY_BUFFER, len(vertices)*int(unsafe.Sizeof(vertices[0])), gl.Ptr(vertices), gl.STATIC_DRAW)
-
-	gl.BindVertexArray(cubeVAO)
-	// Set the position attribute
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
-	gl.EnableVertexAttribArray(0)
-	// Set the normal attribute
-	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
-	gl.EnableVertexAttribArray(1)
-	// Set the texture attribute
-	gl.VertexAttribPointer(2, 2, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(6*unsafe.Sizeof(float32(0))))
-	gl.EnableVertexAttribArray(2)
-
-	// For the light cube
-	var lightVAO uint32
-	gl.GenVertexArrays(1, &lightVAO)
-	gl.BindVertexArray(lightVAO)
-	// only need to bind VBO, not refill it with data
-	gl.BindBuffer(gl.ARRAY_BUFFER, VBO)
-	// Set the position attribute
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
-	gl.EnableVertexAttribArray(0)
-
-	aspectRatio := float32(initialWindowWidth) / float32(initialWindowHeight)
-
-	diffuseMap := loadTextures("assets/container2.png")
-	specularMap := loadTextures("assets/container2_specular.png")
-
-	shaderProgram.use()
-	shaderProgram.setInt("material.diffuse", 0)
-	shaderProgram.setInt("material.specular", 1)
+	customModel := Model{}
+	customModel.LoadModel("backpack/scene.gltf")
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -241,81 +123,20 @@ func main() {
 
 		// Activate shaders
 		shaderProgram.use()
-		shaderProgram.setVec3("viewPos", camera.position)
-		shaderProgram.setFloat("material.shininess", 32.0)
-		shaderProgram.setVec3("light.position", camera.position)
-		shaderProgram.setFloat("light.cutoff", float32(math.Cos(float64(mgl32.DegToRad(12.5)))))
-		shaderProgram.setFloat("light.outerCutoff", float32(math.Cos(float64(mgl32.DegToRad(17.5)))))
-
-		// directional light
-		shaderProgram.setVec3("dirLight.direction", mgl32.Vec3{-0.2, -1.0, -0.3})
-		shaderProgram.setVec3("dirLight.ambient", mgl32.Vec3{0.05, 0.05, 0.05})
-		shaderProgram.setVec3("dirLight.diffuse", mgl32.Vec3{0.4, 0.4, 0.4})
-		shaderProgram.setVec3("dirLight.specular", mgl32.Vec3{0.5, 0.5, 0.5})
-		// point lights
-		for i := 0; i < 4; i++ {
-			target := fmt.Sprintf("pointLights[%v]", i)
-			shaderProgram.setVec3(fmt.Sprintf("%v.%v", target, "position"), pointLightPositions[i])
-			shaderProgram.setVec3(fmt.Sprintf("%v.%v", target, "ambient"), mgl32.Vec3{0.05, 0.05, 0.05})
-			shaderProgram.setVec3(fmt.Sprintf("%v.%v", target, "diffuse"), mgl32.Vec3{0.8, 0.8, 0.8})
-			shaderProgram.setVec3(fmt.Sprintf("%v.%v", target, "specular"), mgl32.Vec3{1.0, 1.0, 1.0})
-			shaderProgram.setFloat(fmt.Sprintf("%v.%v", target, "constant"), 1.0)
-			shaderProgram.setFloat(fmt.Sprintf("%v.%v", target, "linear"), 0.09)
-			shaderProgram.setFloat(fmt.Sprintf("%v.%v", target, "quadratic"), 0.032)
-		}
-		// spotlight
-		shaderProgram.setVec3("spotlight.position", camera.position)
-		shaderProgram.setVec3("spotlight.direction", camera.front)
-		shaderProgram.setFloat("spotlight.cutOff", float32(math.Cos(float64(mgl32.DegToRad(12.5)))))
-		shaderProgram.setFloat("spotlight.outerCutOff", float32(math.Cos(float64(mgl32.DegToRad(17.5)))))
-		shaderProgram.setVec3("spotlight.ambient", mgl32.Vec3{0.0, 0.0, 0.0})
-		shaderProgram.setVec3("spotlight.diffuse", mgl32.Vec3{1.0, 1.0, 1.0})
-		shaderProgram.setVec3("spotlight.specular", mgl32.Vec3{1.0, 1.0, 1.0})
-		shaderProgram.setFloat("spotlight.constant", 1.0)
-		shaderProgram.setFloat("spotlight.linear", 0.09)
-		shaderProgram.setFloat("spotlight.quadratic", 0.032)
 
 		// view/projection transformations
 		// Create the projection matrix to add perspective to the scene
-		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), aspectRatio, 0.1, 100.0)
+		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), initialWindowWidth/initialWindowHeight, 0.1, 100.0)
 		view := camera.getViewMatrix()
 		shaderProgram.setMat4("projection", projection)
 		shaderProgram.setMat4("view", view)
 
-		// world transformation
+		// render the loaded model
 		model := mgl32.Ident4()
+		model = model.Mul4(mgl32.Translate3D(0.0, 0.0, 0.0))
+		model = model.Mul4(mgl32.Scale3D(1.0, 1.0, 1.0))
 		shaderProgram.setMat4("model", model)
-
-		// bind diffuse map
-		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, diffuseMap)
-		// bind specular map
-		gl.ActiveTexture(gl.TEXTURE1)
-		gl.BindTexture(gl.TEXTURE_2D, specularMap)
-
-		// Render cubes
-		gl.BindVertexArray(cubeVAO)
-		for i := 0; i < 10; i++ {
-			model = mgl32.Ident4().Mul4(mgl32.Translate3D(cubePositions[i][0], cubePositions[i][1], cubePositions[i][2]))
-			angle := 20.0 * float32(i)
-			model = model.Mul4(mgl32.HomogRotate3D(angle, mgl32.Vec3{1.0, 0.3, 0.5}))
-			shaderProgram.setMat4("model", model)
-			gl.DrawArrays(gl.TRIANGLES, 0, 36)
-
-		}
-
-		// Draw light cubes
-		lightShaderProgram.use()
-		lightShaderProgram.setMat4("projection", projection)
-		lightShaderProgram.setMat4("view", view)
-		gl.BindVertexArray(lightVAO)
-
-		for i := 0; i < 4; i++ {
-			model = mgl32.Ident4().Mul4(mgl32.Translate3D(pointLightPositions[i].X(), pointLightPositions[i].Y(), pointLightPositions[i].Z()))
-			model = model.Mul4(mgl32.Scale3D(0.2, 0.2, 0.2))
-			lightShaderProgram.setMat4("model", model)
-			gl.DrawArrays(gl.TRIANGLES, 0, 36)
-		}
+		customModel.Draw(shaderProgram)
 
 		// Swap the color buffer (a large 2D buffer that contains color values for each pixel in GLFW's window) that is used to render to during this render iteration and show it as output to the screen.
 		window.SwapBuffers()
