@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"unsafe"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -15,7 +16,6 @@ import (
 const (
 	initialWindowWidth  = 800
 	initialWindowHeight = 600
-	enableWireframe     = false
 )
 
 var (
@@ -29,13 +29,68 @@ var (
 	// Handle when mouse first enters window and has large offset to center
 	firstMouse = true
 	camera     *Camera
+
+	cubeVertices = []float32{
+		// positions          // texture Coords
+		-0.5, -0.5, -0.5, 0.0, 0.0,
+		0.5, -0.5, -0.5, 1.0, 0.0,
+		0.5, 0.5, -0.5, 1.0, 1.0,
+		0.5, 0.5, -0.5, 1.0, 1.0,
+		-0.5, 0.5, -0.5, 0.0, 1.0,
+		-0.5, -0.5, -0.5, 0.0, 0.0,
+
+		-0.5, -0.5, 0.5, 0.0, 0.0,
+		0.5, -0.5, 0.5, 1.0, 0.0,
+		0.5, 0.5, 0.5, 1.0, 1.0,
+		0.5, 0.5, 0.5, 1.0, 1.0,
+		-0.5, 0.5, 0.5, 0.0, 1.0,
+		-0.5, -0.5, 0.5, 0.0, 0.0,
+
+		-0.5, 0.5, 0.5, 1.0, 0.0,
+		-0.5, 0.5, -0.5, 1.0, 1.0,
+		-0.5, -0.5, -0.5, 0.0, 1.0,
+		-0.5, -0.5, -0.5, 0.0, 1.0,
+		-0.5, -0.5, 0.5, 0.0, 0.0,
+		-0.5, 0.5, 0.5, 1.0, 0.0,
+
+		0.5, 0.5, 0.5, 1.0, 0.0,
+		0.5, 0.5, -0.5, 1.0, 1.0,
+		0.5, -0.5, -0.5, 0.0, 1.0,
+		0.5, -0.5, -0.5, 0.0, 1.0,
+		0.5, -0.5, 0.5, 0.0, 0.0,
+		0.5, 0.5, 0.5, 1.0, 0.0,
+
+		-0.5, -0.5, -0.5, 0.0, 1.0,
+		0.5, -0.5, -0.5, 1.0, 1.0,
+		0.5, -0.5, 0.5, 1.0, 0.0,
+		0.5, -0.5, 0.5, 1.0, 0.0,
+		-0.5, -0.5, 0.5, 0.0, 0.0,
+		-0.5, -0.5, -0.5, 0.0, 1.0,
+
+		-0.5, 0.5, -0.5, 0.0, 1.0,
+		0.5, 0.5, -0.5, 1.0, 1.0,
+		0.5, 0.5, 0.5, 1.0, 0.0,
+		0.5, 0.5, 0.5, 1.0, 0.0,
+		-0.5, 0.5, 0.5, 0.0, 0.0,
+		-0.5, 0.5, -0.5, 0.0, 1.0,
+	}
+	planeVertices = []float32{
+		// positions          // texture Coords (note we set these higher than 1 (together with GL_REPEAT as texture wrapping mode). this will cause the floor texture to repeat)
+		5.0, -0.5, 5.0, 2.0, 0.0,
+		-5.0, -0.5, 5.0, 0.0, 0.0,
+		-5.0, -0.5, -5.0, 0.0, 2.0,
+
+		5.0, -0.5, 5.0, 2.0, 0.0,
+		-5.0, -0.5, -5.0, 0.0, 2.0,
+		5.0, -0.5, -5.0, 2.0, 2.0,
+	}
 )
 
 func init() {
 	// This is needed to arrange that main() runs on main thread.
 	runtime.LockOSThread()
 
-	camera = NewDefaultCameraAtPosition(mgl32.Vec3{1.0, 0.5, 4.0})
+	camera = NewDefaultCameraAtPosition(mgl32.Vec3{0.0, 0.0, 3.0})
 }
 
 func main() {
@@ -70,16 +125,12 @@ func main() {
 	window.MakeContextCurrent()
 	// Set the function that is run every time the viewport is resized by the user.
 	window.SetFramebufferSizeCallback(framebufferSizeCallback)
-	// Tell glfw to capture and hide the cursor
-	// window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
 	// Listen to mouse events
 	window.SetCursorPosCallback(mouseCallback)
+	// Tell glfw to capture and hide the cursor
+	window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
 	// Listen to scroll events
 	window.SetScrollCallback(scrollCallback)
-
-	if enableWireframe {
-		gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
-	}
 
 	/*
 	 * Load OS-specific OpenGL function pointers
@@ -91,6 +142,7 @@ func main() {
 	// Allow OpenGL to perform depth testing, where it uses the z-buffer to know when (not) to
 	// draw overlapping entities
 	gl.Enable(gl.DEPTH_TEST)
+	gl.DepthFunc(gl.LESS)
 
 	/*
 	 * Build and compile our shader program
@@ -100,11 +152,38 @@ func main() {
 		log.Fatal(err)
 	}
 
-	/*
-	* load models
-	 */
-	customModel := Model{}
-	customModel.LoadModel("backpack/scene.gltf")
+	// cube VAO
+	var cubeVAO, cubeVBO uint32
+	gl.GenVertexArrays(1, &cubeVAO)
+	gl.GenBuffers(1, &cubeVBO)
+	gl.BindVertexArray(cubeVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, cubeVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, len(cubeVertices)*int(unsafe.Sizeof(cubeVertices[0])), gl.Ptr(cubeVertices), gl.STATIC_DRAW)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	gl.EnableVertexAttribArray(1)
+	gl.VertexAttribPointer(1, 2, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
+	gl.BindVertexArray(0)
+	// plane VAO
+	var planeVAO, planeVBO uint32
+	gl.GenVertexArrays(1, &planeVAO)
+	gl.GenBuffers(1, &planeVBO)
+	gl.BindVertexArray(planeVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, planeVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, len(planeVertices)*int(unsafe.Sizeof(planeVertices[0])), gl.Ptr(planeVertices), gl.STATIC_DRAW)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	gl.EnableVertexAttribArray(1)
+	gl.VertexAttribPointer(1, 2, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
+	gl.BindVertexArray(0)
+
+	// load textures
+	cubeTexture := loadTextures("assets/marble.png")
+	floorTexture := loadTextures("assets/metal.png")
+
+	// shader configuration
+	shaderProgram.use()
+	shaderProgram.setInt("texture1", 0)
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -124,19 +203,29 @@ func main() {
 		// Activate shaders
 		shaderProgram.use()
 
-		// view/projection transformations
-		// Create the projection matrix to add perspective to the scene
-		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), initialWindowWidth/initialWindowHeight, 0.1, 100.0)
-		view := camera.getViewMatrix()
-		shaderProgram.setMat4("projection", projection)
-		shaderProgram.setMat4("view", view)
-
-		// render the loaded model
 		model := mgl32.Ident4()
-		model = model.Mul4(mgl32.Translate3D(0.0, 0.0, 0.0))
-		model = model.Mul4(mgl32.Scale3D(1.0, 1.0, 1.0))
+		view := camera.getViewMatrix()
+		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), float32(initialWindowWidth)/float32(initialWindowHeight), 0.1, 100.0)
+		shaderProgram.setMat4("view", view)
+		shaderProgram.setMat4("projection", projection)
+
+		// cubes
+		gl.BindVertexArray(cubeVAO)
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_2D, cubeTexture)
+		model = model.Mul4(mgl32.Translate3D(-1.0, 0.0, -1.0))
 		shaderProgram.setMat4("model", model)
-		customModel.Draw(shaderProgram)
+		gl.DrawArrays(gl.TRIANGLES, 0, 36)
+		model = mgl32.Ident4()
+		model = model.Mul4(mgl32.Translate3D(2.0, 0.0, 0.0))
+		shaderProgram.setMat4("model", model)
+		gl.DrawArrays(gl.TRIANGLES, 0, 36)
+		// floor
+		gl.BindVertexArray(planeVAO)
+		gl.BindTexture(gl.TEXTURE_2D, floorTexture)
+		shaderProgram.setMat4("model", mgl32.Ident4())
+		gl.DrawArrays(gl.TRIANGLES, 0, 6)
+		gl.BindVertexArray(0)
 
 		// Swap the color buffer (a large 2D buffer that contains color values for each pixel in GLFW's window) that is used to render to during this render iteration and show it as output to the screen.
 		window.SwapBuffers()
