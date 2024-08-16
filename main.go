@@ -1,10 +1,14 @@
 package main
 
 import (
-	"image/png"
+	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"log"
 	"os"
 	"runtime"
+	"sort"
 	"unsafe"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -84,6 +88,23 @@ var (
 		-5.0, -0.5, -5.0, 0.0, 2.0,
 		5.0, -0.5, -5.0, 2.0, 2.0,
 	}
+	windows = []mgl32.Vec3{
+		{-1.5, 0.0, -0.48},
+		{1.5, 0.0, 0.51},
+		{0.0, 0.0, 0.7},
+		{-0.3, 0.0, -2.3},
+		{0.5, 0.0, -0.6},
+	}
+	transparentVertices = []float32{
+		// positions         // texture Coords (swapped y coordinates because texture is flipped upside down)
+		0.0, 0.5, 0.0, 0.0, 0.0,
+		0.0, -0.5, 0.0, 0.0, -1.0,
+		1.0, -0.5, 0.0, 1.0, -1.0,
+
+		0.0, 0.5, 0.0, 0.0, 0.0,
+		1.0, -0.5, 0.0, 1.0, -1.0,
+		1.0, 0.5, 0.0, 1.0, 0.0,
+	}
 )
 
 func init() {
@@ -142,20 +163,13 @@ func main() {
 	// Allow OpenGL to perform depth testing, where it uses the z-buffer to know when (not) to
 	// draw overlapping entities
 	gl.Enable(gl.DEPTH_TEST)
-	gl.DepthFunc(gl.LESS)
-	// Enable stencil
-	gl.Enable(gl.STENCIL_TEST)
-	gl.StencilOp(gl.KEEP, gl.KEEP, gl.REPLACE)
-	gl.StencilFunc(gl.NOTEQUAL, 1, 0xFF)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 
 	/*
 	 * Build and compile our shader program
 	 */
 	shaderProgram, err := NewShader("shaders/shader.vs", "shaders/shader.fs")
-	if err != nil {
-		log.Fatal(err)
-	}
-	singleColorShader, err := NewShader("shaders/single_color.vs", "shaders/single_color.fs")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -184,10 +198,22 @@ func main() {
 	gl.EnableVertexAttribArray(1)
 	gl.VertexAttribPointer(1, 2, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
 	gl.BindVertexArray(0)
-
+	// transparent VAO
+	var transparentVAO, transparentVBO uint32
+	gl.GenVertexArrays(1, &transparentVAO)
+	gl.GenBuffers(1, &transparentVBO)
+	gl.BindVertexArray(transparentVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, transparentVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, len(transparentVertices)*int(unsafe.Sizeof(transparentVertices[0])), gl.Ptr(transparentVertices), gl.STATIC_DRAW)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	gl.EnableVertexAttribArray(1)
+	gl.VertexAttribPointer(1, 2, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
+	gl.BindVertexArray(0)
 	// load textures
-	cubeTexture := loadTextures("assets/marble.png")
+	cubeTexture := loadTextures("assets/marble.jpg")
 	floorTexture := loadTextures("assets/metal.png")
+	transparentTexture := loadTextures("assets/window.png")
 
 	// shader configuration
 	shaderProgram.use()
@@ -203,72 +229,72 @@ func main() {
 		// Handle user input.
 		processInput(window)
 
+		sorted := make(map[float32]mgl32.Vec3)
+		// Calculate distances and populate the map
+		for _, w := range windows {
+			distance := camera.position.Sub(w).Len()
+			sorted[distance] = w
+		}
+
+		// To maintain the order, we extract and sort the distances
+		distances := make([]float32, 0, len(sorted))
+		for distance := range sorted {
+			distances = append(distances, distance)
+		}
+		// Sort distances in descending order (from farthest to nearest)
+		sort.Slice(distances, func(i, j int) bool {
+			return distances[i] > distances[j]
+		})
+
 		// Perform render logic.
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
 		// Clear the color and depth buffer (as opposed to the stencil buffer)
-		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
 		// Activate shaders
-		singleColorShader.use()
+		shaderProgram.use()
 
-		model := mgl32.Ident4()
 		view := camera.getViewMatrix()
 		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), float32(initialWindowWidth)/float32(initialWindowHeight), 0.1, 100.0)
-		singleColorShader.setMat4("view", view)
-		singleColorShader.setMat4("projection", projection)
-
-		shaderProgram.use()
 		shaderProgram.setMat4("view", view)
 		shaderProgram.setMat4("projection", projection)
 
-		// floor
-		gl.StencilMask(0x00)
+		// Draw opaque objects first (cubes and floor)
+		gl.BindVertexArray(cubeVAO)
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_2D, cubeTexture)
+		model := mgl32.Translate3D(-1.0, 0.0, -1.0)
+		shaderProgram.setMat4("model", model)
+		gl.DrawArrays(gl.TRIANGLES, 0, 36)
+		model = mgl32.Translate3D(2.0, 0.0, 0.0)
+		shaderProgram.setMat4("model", model)
+		gl.DrawArrays(gl.TRIANGLES, 0, 36)
+
+		// Draw floor
 		gl.BindVertexArray(planeVAO)
 		gl.BindTexture(gl.TEXTURE_2D, floorTexture)
 		shaderProgram.setMat4("model", mgl32.Ident4())
 		gl.DrawArrays(gl.TRIANGLES, 0, 6)
-		gl.BindVertexArray(0)
 
-		// cubes: 1st render, draw objects normal, write to stencil buffer
-		gl.StencilFunc(gl.ALWAYS, 1, 0xFF)
-		gl.StencilMask(0xFF)
-		gl.BindVertexArray(cubeVAO)
-		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, cubeTexture)
-		model = model.Mul4(mgl32.Translate3D(-1.0, 0.0, -1.0))
-		shaderProgram.setMat4("model", model)
-		gl.DrawArrays(gl.TRIANGLES, 0, 36)
-		model = mgl32.Ident4()
-		model = model.Mul4(mgl32.Translate3D(2.0, 0.0, 0.0))
-		shaderProgram.setMat4("model", model)
-		gl.DrawArrays(gl.TRIANGLES, 0, 36)
-		// cubes: 2nd render: draw slightly scaled versions, this time disabling stencil writing. b/c the stencil
-		// buffer is now fillled with several 1s, the parts of the buffer that are 1 are not drawn, thus only drawing
-		// the object size differences, making it look like a border
-		gl.StencilFunc(gl.NOTEQUAL, 1, 0xFF)
-		gl.StencilMask(0x00)
-		gl.Disable(gl.DEPTH_TEST)
-		singleColorShader.use()
-		scale := float32(1.1)
-		gl.BindVertexArray(cubeVAO)
-		gl.BindTexture(gl.TEXTURE_2D, cubeTexture)
-		model = mgl32.Ident4()
-		model = model.Mul4(mgl32.Translate3D(-1.0, 0.0, -1.0))
-		model = model.Mul4(mgl32.Scale3D(scale, scale, scale))
-		shaderProgram.setMat4("model", model)
-		gl.DrawArrays(gl.TRIANGLES, 0, 36)
-		model = mgl32.Ident4()
-		model = model.Mul4(mgl32.Translate3D(2.0, 0.0, 0.0))
-		model = model.Mul4(mgl32.Scale3D(scale, scale, scale))
-		shaderProgram.setMat4("model", model)
-		gl.DrawArrays(gl.TRIANGLES, 0, 36)
-		gl.BindVertexArray(0)
-		gl.StencilMask(0xFF)
-		gl.StencilFunc(gl.ALWAYS, 0, 0xFF)
-		gl.Enable(gl.DEPTH_TEST)
-		// Swap the color buffer (a large 2D buffer that contains color values for each pixel in GLFW's window) that is used to render to during this render iteration and show it as output to the screen.
+		// Draw transparent objects (windows) from farthest to nearest
+		gl.BindVertexArray(transparentVAO)
+		gl.BindTexture(gl.TEXTURE_2D, transparentTexture)
+		for _, distance := range distances {
+			windowRect := sorted[distance]
+			model = mgl32.Ident4()
+
+			// Translate the model matrix by the window position
+			model = mgl32.Translate3D(windowRect.X(), windowRect.Y(), windowRect.Z()).Mul4(model)
+
+			// Set the model matrix in the shader
+			shaderProgram.setMat4("model", model)
+
+			// Draw the window
+			gl.DrawArrays(gl.TRIANGLES, 0, 6)
+		}
+
+		// Swap the color buffer and poll events
 		window.SwapBuffers()
-		// Check if events are triggered, update window state, and invoke any registered callbacks.
 		glfw.PollEvents()
 	}
 
@@ -332,49 +358,144 @@ func processInput(w *glfw.Window) {
 		camera = NewDefaultCameraAtPosition(mgl32.Vec3{1.0, 0.5, 4.0})
 	}
 }
-
 func loadTextures(filePath string) uint32 {
-	/*
-	 * load and create a texture
-	 */
+	// Generate and bind a new texture ID
 	var texture uint32
 	gl.GenTextures(1, &texture)
 	gl.BindTexture(gl.TEXTURE_2D, texture)
-	// Set texture options
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+	// Open and decode the texture image file
 	textureFile, err := os.Open(filePath)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to open texture file: %v", err)
 	}
-	textureImage, err := png.Decode(textureFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	textureFile.Close()
-	bounds := textureImage.Bounds()
-	// Create a slice to hold the pixel data
-	pixelData := make([]byte, bounds.Dx()*bounds.Dy()*4)
+	defer textureFile.Close()
 
-	// Convert the image to RGB and copy the pixel data to the slice
-	index := 0
-	for y := bounds.Max.Y - 1; y >= bounds.Min.Y; y-- {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			r, g, b, _ := textureImage.At(x, y).RGBA()
-			pixelData[index] = byte(r >> 8)   // Red
-			pixelData[index+1] = byte(g >> 8) // Green
-			pixelData[index+2] = byte(b >> 8) // Blue
-			pixelData[index+3] = byte(b >> 8) // Alpha
-			index += 4
+	// Decode the image (JPEG, PNG, etc.)
+	textureImage, _, err := image.Decode(textureFile)
+	if err != nil {
+		log.Fatalf("Failed to decode texture file [%s]: %v", filePath, err)
+	}
+
+	// Determine the number of components and the OpenGL format
+	bounds := textureImage.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	var format, internalFormat int32
+	var pixelData []byte
+
+	switch img := textureImage.(type) {
+	case *image.Gray:
+		fmt.Printf("[%v] color format: gray\n", filePath)
+		format = gl.RED
+		internalFormat = gl.RED
+		pixelData = make([]byte, width*height)
+		index := 0
+		for y := bounds.Max.Y - 1; y >= bounds.Min.Y; y-- {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				r := img.GrayAt(x, y).Y
+				pixelData[index] = r
+				index++
+			}
+		}
+	case *image.RGBA:
+		// Check if the alpha channel is used
+		hasAlpha := false
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				_, _, _, a := img.At(x, y).RGBA()
+				if a != 0xFFFF {
+					hasAlpha = true
+					break
+				}
+			}
+			if hasAlpha {
+				break
+			}
+		}
+
+		if hasAlpha {
+			fmt.Printf("[%v] color format: RGBA\n", filePath)
+			format = gl.RGBA
+			internalFormat = gl.RGBA
+			pixelData = make([]byte, width*height*4)
+			index := 0
+			for y := bounds.Max.Y - 1; y >= bounds.Min.Y; y-- {
+				for x := bounds.Min.X; x < bounds.Max.X; x++ {
+					r, g, b, a := img.At(x, y).RGBA()
+					pixelData[index] = byte(r >> 8)
+					pixelData[index+1] = byte(g >> 8)
+					pixelData[index+2] = byte(b >> 8)
+					pixelData[index+3] = byte(a >> 8)
+					index += 4
+				}
+			}
+		} else {
+			fmt.Printf("[%v] color format: RGB\n", filePath)
+			// Treat as RGB if alpha is not used
+			format = gl.RGB
+			internalFormat = gl.RGB
+			pixelData = make([]byte, width*height*3)
+			index := 0
+			for y := bounds.Max.Y - 1; y >= bounds.Min.Y; y-- {
+				for x := bounds.Min.X; x < bounds.Max.X; x++ {
+					r, g, b, _ := img.At(x, y).RGBA()
+					pixelData[index] = byte(r >> 8)
+					pixelData[index+1] = byte(g >> 8)
+					pixelData[index+2] = byte(b >> 8)
+					index += 3
+				}
+			}
+		}
+	case *image.NRGBA:
+		fmt.Printf("[%v] color format: NRGBA\n", filePath)
+		format = gl.RGBA
+		internalFormat = gl.RGBA
+		pixelData = make([]byte, width*height*4)
+		index := 0
+		for y := bounds.Max.Y - 1; y >= bounds.Min.Y; y-- {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				r, g, b, a := img.At(x, y).RGBA()
+				pixelData[index] = byte(r >> 8)
+				pixelData[index+1] = byte(g >> 8)
+				pixelData[index+2] = byte(b >> 8)
+				pixelData[index+3] = byte(a >> 8)
+				index += 4
+			}
+		}
+	default:
+		// Handle RGB images without alpha channel
+		fmt.Printf("[%v] color format: RGB\n", filePath)
+		format = gl.RGB
+		internalFormat = gl.RGB
+		pixelData = make([]byte, width*height*3)
+		index := 0
+		for y := bounds.Max.Y - 1; y >= bounds.Min.Y; y-- {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				r, g, b, _ := textureImage.At(x, y).RGBA()
+				pixelData[index] = byte(r >> 8)
+				pixelData[index+1] = byte(g >> 8)
+				pixelData[index+2] = byte(b >> 8)
+				index += 3
+			}
 		}
 	}
 
-	// Generate texture from image data
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, int32(textureImage.Bounds().Dx()), int32(textureImage.Bounds().Dy()), 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(pixelData))
-	// Generate mipmap, handling various resolutions of the texture at different distances.
+	// Upload texture data to the GPU
+	gl.TexImage2D(gl.TEXTURE_2D, 0, internalFormat, int32(width), int32(height), 0, uint32(format), gl.UNSIGNED_BYTE, gl.Ptr(pixelData))
+
+	// Generate mipmaps
 	gl.GenerateMipmap(gl.TEXTURE_2D)
+
+	// Set texture wrapping/filtering options
+	// if format == gl.RGBA {
+	// 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+	// 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	// } else {
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+	// }
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 
 	return texture
 }
