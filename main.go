@@ -143,11 +143,19 @@ func main() {
 	// draw overlapping entities
 	gl.Enable(gl.DEPTH_TEST)
 	gl.DepthFunc(gl.LESS)
+	// Enable stencil
+	gl.Enable(gl.STENCIL_TEST)
+	gl.StencilOp(gl.KEEP, gl.KEEP, gl.REPLACE)
+	gl.StencilFunc(gl.NOTEQUAL, 1, 0xFF)
 
 	/*
 	 * Build and compile our shader program
 	 */
 	shaderProgram, err := NewShader("shaders/shader.vs", "shaders/shader.fs")
+	if err != nil {
+		log.Fatal(err)
+	}
+	singleColorShader, err := NewShader("shaders/single_color.vs", "shaders/single_color.fs")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -198,18 +206,32 @@ func main() {
 		// Perform render logic.
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
 		// Clear the color and depth buffer (as opposed to the stencil buffer)
-		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT)
 
 		// Activate shaders
-		shaderProgram.use()
+		singleColorShader.use()
 
 		model := mgl32.Ident4()
 		view := camera.getViewMatrix()
 		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), float32(initialWindowWidth)/float32(initialWindowHeight), 0.1, 100.0)
+		singleColorShader.setMat4("view", view)
+		singleColorShader.setMat4("projection", projection)
+
+		shaderProgram.use()
 		shaderProgram.setMat4("view", view)
 		shaderProgram.setMat4("projection", projection)
 
-		// cubes
+		// floor
+		gl.StencilMask(0x00)
+		gl.BindVertexArray(planeVAO)
+		gl.BindTexture(gl.TEXTURE_2D, floorTexture)
+		shaderProgram.setMat4("model", mgl32.Ident4())
+		gl.DrawArrays(gl.TRIANGLES, 0, 6)
+		gl.BindVertexArray(0)
+
+		// cubes: 1st render, draw objects normal, write to stencil buffer
+		gl.StencilFunc(gl.ALWAYS, 1, 0xFF)
+		gl.StencilMask(0xFF)
 		gl.BindVertexArray(cubeVAO)
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.BindTexture(gl.TEXTURE_2D, cubeTexture)
@@ -220,13 +242,30 @@ func main() {
 		model = model.Mul4(mgl32.Translate3D(2.0, 0.0, 0.0))
 		shaderProgram.setMat4("model", model)
 		gl.DrawArrays(gl.TRIANGLES, 0, 36)
-		// floor
-		gl.BindVertexArray(planeVAO)
-		gl.BindTexture(gl.TEXTURE_2D, floorTexture)
-		shaderProgram.setMat4("model", mgl32.Ident4())
-		gl.DrawArrays(gl.TRIANGLES, 0, 6)
+		// cubes: 2nd render: draw slightly scaled versions, this time disabling stencil writing. b/c the stencil
+		// buffer is now fillled with several 1s, the parts of the buffer that are 1 are not drawn, thus only drawing
+		// the object size differences, making it look like a border
+		gl.StencilFunc(gl.NOTEQUAL, 1, 0xFF)
+		gl.StencilMask(0x00)
+		gl.Disable(gl.DEPTH_TEST)
+		singleColorShader.use()
+		scale := float32(1.1)
+		gl.BindVertexArray(cubeVAO)
+		gl.BindTexture(gl.TEXTURE_2D, cubeTexture)
+		model = mgl32.Ident4()
+		model = model.Mul4(mgl32.Translate3D(-1.0, 0.0, -1.0))
+		model = model.Mul4(mgl32.Scale3D(scale, scale, scale))
+		shaderProgram.setMat4("model", model)
+		gl.DrawArrays(gl.TRIANGLES, 0, 36)
+		model = mgl32.Ident4()
+		model = model.Mul4(mgl32.Translate3D(2.0, 0.0, 0.0))
+		model = model.Mul4(mgl32.Scale3D(scale, scale, scale))
+		shaderProgram.setMat4("model", model)
+		gl.DrawArrays(gl.TRIANGLES, 0, 36)
 		gl.BindVertexArray(0)
-
+		gl.StencilMask(0xFF)
+		gl.StencilFunc(gl.ALWAYS, 0, 0xFF)
+		gl.Enable(gl.DEPTH_TEST)
 		// Swap the color buffer (a large 2D buffer that contains color values for each pixel in GLFW's window) that is used to render to during this render iteration and show it as output to the screen.
 		window.SwapBuffers()
 		// Check if events are triggered, update window state, and invoke any registered callbacks.
