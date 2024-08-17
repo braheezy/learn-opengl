@@ -8,7 +8,6 @@ import (
 	"log"
 	"os"
 	"runtime"
-	"sort"
 	"unsafe"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -79,7 +78,7 @@ var (
 		-0.5, 0.5, -0.5, 0.0, 1.0,
 	}
 	planeVertices = []float32{
-		// positions          // texture Coords (note we set these higher than 1 (together with GL_REPEAT as texture wrapping mode). this will cause the floor texture to repeat)
+		// positions          // texture Coords
 		5.0, -0.5, 5.0, 2.0, 0.0,
 		-5.0, -0.5, 5.0, 0.0, 0.0,
 		-5.0, -0.5, -5.0, 0.0, 2.0,
@@ -88,22 +87,16 @@ var (
 		-5.0, -0.5, -5.0, 0.0, 2.0,
 		5.0, -0.5, -5.0, 2.0, 2.0,
 	}
-	windows = []mgl32.Vec3{
-		{-1.5, 0.0, -0.48},
-		{1.5, 0.0, 0.51},
-		{0.0, 0.0, 0.7},
-		{-0.3, 0.0, -2.3},
-		{0.5, 0.0, -0.6},
-	}
-	transparentVertices = []float32{
-		// positions         // texture Coords (swapped y coordinates because texture is flipped upside down)
-		0.0, 0.5, 0.0, 0.0, 0.0,
-		0.0, -0.5, 0.0, 0.0, -1.0,
-		1.0, -0.5, 0.0, 1.0, -1.0,
+	quadVertices = []float32{
+		// vertex attributes for a quad that fills the entire screen in Normalized Device Coordinates.
+		// positions   // texCoords
+		-1.0, 1.0, 0.0, 1.0,
+		-1.0, -1.0, 0.0, 0.0,
+		1.0, -1.0, 1.0, 0.0,
 
-		0.0, 0.5, 0.0, 0.0, 0.0,
-		1.0, -0.5, 0.0, 1.0, -1.0,
-		1.0, 0.5, 0.0, 1.0, 0.0,
+		-1.0, 1.0, 0.0, 1.0,
+		1.0, -1.0, 1.0, 0.0,
+		1.0, 1.0, 1.0, 1.0,
 	}
 )
 
@@ -163,13 +156,15 @@ func main() {
 	// Allow OpenGL to perform depth testing, where it uses the z-buffer to know when (not) to
 	// draw overlapping entities
 	gl.Enable(gl.DEPTH_TEST)
-	gl.Enable(gl.BLEND)
-	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 
 	/*
 	 * Build and compile our shader program
 	 */
 	shaderProgram, err := NewShader("shaders/shader.vs", "shaders/shader.fs")
+	if err != nil {
+		log.Fatal(err)
+	}
+	screenShader, err := NewShader("shaders/screen.vs", "shaders/screen.fs")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -198,26 +193,54 @@ func main() {
 	gl.EnableVertexAttribArray(1)
 	gl.VertexAttribPointer(1, 2, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
 	gl.BindVertexArray(0)
-	// transparent VAO
-	var transparentVAO, transparentVBO uint32
-	gl.GenVertexArrays(1, &transparentVAO)
-	gl.GenBuffers(1, &transparentVBO)
-	gl.BindVertexArray(transparentVAO)
-	gl.BindBuffer(gl.ARRAY_BUFFER, transparentVBO)
-	gl.BufferData(gl.ARRAY_BUFFER, len(transparentVertices)*int(unsafe.Sizeof(transparentVertices[0])), gl.Ptr(transparentVertices), gl.STATIC_DRAW)
+	// screen quad VAO
+	var quadVAO, quadVBO uint32
+	gl.GenVertexArrays(1, &quadVAO)
+	gl.GenBuffers(1, &quadVBO)
+	gl.BindVertexArray(quadVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, quadVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, len(quadVertices)*int(unsafe.Sizeof(quadVertices[0])), gl.Ptr(quadVertices), gl.STATIC_DRAW)
 	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, int32(4*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
 	gl.EnableVertexAttribArray(1)
-	gl.VertexAttribPointer(1, 2, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
-	gl.BindVertexArray(0)
+	gl.VertexAttribPointer(1, 2, gl.FLOAT, false, int32(4*unsafe.Sizeof(float32(0))), gl.Ptr(2*unsafe.Sizeof(float32(0))))
+
 	// load textures
-	cubeTexture := loadTextures("assets/marble.jpg")
+	cubeTexture := loadTextures("assets/container.jpg")
 	floorTexture := loadTextures("assets/metal.png")
-	transparentTexture := loadTextures("assets/window.png")
 
 	// shader configuration
 	shaderProgram.use()
 	shaderProgram.setInt("texture1", 0)
+
+	screenShader.use()
+	screenShader.setInt("screenTexture", 0)
+
+	// framebuffer configuration
+	var framebuffer uint32
+	gl.GenFramebuffers(1, &framebuffer)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, framebuffer)
+	// create a color attachment texture
+	var textureColorbuffer uint32
+	gl.GenTextures(1, &textureColorbuffer)
+	gl.BindTexture(gl.TEXTURE_2D, textureColorbuffer)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, initialWindowWidth, initialWindowHeight, 0, gl.RGB, gl.UNSIGNED_BYTE, gl.Ptr(nil))
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, textureColorbuffer, 0)
+	// create a renderbuffer object for depth and stencil attachment (we won't be sampling these)
+	var rbo uint32
+	gl.GenRenderbuffers(1, &rbo)
+	gl.BindRenderbuffer(gl.RENDERBUFFER, rbo)
+	// use a single renderbuffer object for both a depth AND stencil buffer.
+	gl.RenderbufferStorage(gl.RENDERBUFFER, gl.DEPTH24_STENCIL8, initialWindowWidth, initialWindowHeight)
+	// now actually attach it
+	gl.FramebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, rbo)
+	// now that we actually created the framebuffer and added all attachments we want to check if it is actually complete now
+	if gl.CheckFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE {
+		fmt.Printf("ERROR::FRAMEBUFFER:: Framebuffer is not complete!\n")
+	}
+	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -229,69 +252,54 @@ func main() {
 		// Handle user input.
 		processInput(window)
 
-		sorted := make(map[float32]mgl32.Vec3)
-		// Calculate distances and populate the map
-		for _, w := range windows {
-			distance := camera.position.Sub(w).Len()
-			sorted[distance] = w
-		}
+		// render
+		// bind to framebuffer and draw scene as we normally would to color texture
+		gl.BindFramebuffer(gl.FRAMEBUFFER, framebuffer)
+		// enable depth testing (is disabled for rendering screen-space quad)
+		gl.Enable(gl.DEPTH_TEST)
 
-		// To maintain the order, we extract and sort the distances
-		distances := make([]float32, 0, len(sorted))
-		for distance := range sorted {
-			distances = append(distances, distance)
-		}
-		// Sort distances in descending order (from farthest to nearest)
-		sort.Slice(distances, func(i, j int) bool {
-			return distances[i] > distances[j]
-		})
-
-		// Perform render logic.
+		// make sure we clear the framebuffer's content
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
-		// Clear the color and depth buffer (as opposed to the stencil buffer)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		// Activate shaders
 		shaderProgram.use()
 
 		view := camera.getViewMatrix()
-		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), float32(initialWindowWidth)/float32(initialWindowHeight), 0.1, 100.0)
+		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), initialWindowWidth/initialWindowHeight, 0.1, 100.0)
 		shaderProgram.setMat4("view", view)
 		shaderProgram.setMat4("projection", projection)
 
-		// Draw opaque objects first (cubes and floor)
+		// cubes
 		gl.BindVertexArray(cubeVAO)
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.BindTexture(gl.TEXTURE_2D, cubeTexture)
-		model := mgl32.Translate3D(-1.0, 0.0, -1.0)
+		model := mgl32.Ident4().Mul4(mgl32.Translate3D(-1.0, 0.0, -1.0))
 		shaderProgram.setMat4("model", model)
 		gl.DrawArrays(gl.TRIANGLES, 0, 36)
-		model = mgl32.Translate3D(2.0, 0.0, 0.0)
+		model = mgl32.Ident4().Mul4(mgl32.Translate3D(2.0, 0.0, 0.0))
 		shaderProgram.setMat4("model", model)
 		gl.DrawArrays(gl.TRIANGLES, 0, 36)
-
-		// Draw floor
+		// floor
 		gl.BindVertexArray(planeVAO)
 		gl.BindTexture(gl.TEXTURE_2D, floorTexture)
 		shaderProgram.setMat4("model", mgl32.Ident4())
 		gl.DrawArrays(gl.TRIANGLES, 0, 6)
+		gl.BindVertexArray(0)
 
-		// Draw transparent objects (windows) from farthest to nearest
-		gl.BindVertexArray(transparentVAO)
-		gl.BindTexture(gl.TEXTURE_2D, transparentTexture)
-		for _, distance := range distances {
-			windowRect := sorted[distance]
-			model = mgl32.Ident4()
+		// now bind back to default framebuffer and draw a quad plane with the attached framebuffer color texture
+		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+		// disable depth test so screen-space quad isn't discarded due to depth test.
+		gl.Disable(gl.DEPTH_TEST)
+		// clear all relevant buffers
+		// set clear color to white (not really necessary actually, since we won't be able to see behind the quad anyways)
+		gl.ClearColor(1.0, 1.0, 1.0, 1.0)
+		gl.Clear(gl.COLOR_BUFFER_BIT)
 
-			// Translate the model matrix by the window position
-			model = mgl32.Translate3D(windowRect.X(), windowRect.Y(), windowRect.Z()).Mul4(model)
-
-			// Set the model matrix in the shader
-			shaderProgram.setMat4("model", model)
-
-			// Draw the window
-			gl.DrawArrays(gl.TRIANGLES, 0, 6)
-		}
+		screenShader.use()
+		gl.BindVertexArray(quadVAO)
+		// use the color attachment texture as the texture of the quad plane
+		gl.BindTexture(gl.TEXTURE_2D, textureColorbuffer)
+		gl.DrawArrays(gl.TRIANGLES, 0, 6)
 
 		// Swap the color buffer and poll events
 		window.SwapBuffers()
@@ -385,7 +393,6 @@ func loadTextures(filePath string) uint32 {
 
 	switch img := textureImage.(type) {
 	case *image.Gray:
-		fmt.Printf("[%v] color format: gray\n", filePath)
 		format = gl.RED
 		internalFormat = gl.RED
 		pixelData = make([]byte, width*height)
@@ -414,7 +421,6 @@ func loadTextures(filePath string) uint32 {
 		}
 
 		if hasAlpha {
-			fmt.Printf("[%v] color format: RGBA\n", filePath)
 			format = gl.RGBA
 			internalFormat = gl.RGBA
 			pixelData = make([]byte, width*height*4)
@@ -430,7 +436,6 @@ func loadTextures(filePath string) uint32 {
 				}
 			}
 		} else {
-			fmt.Printf("[%v] color format: RGB\n", filePath)
 			// Treat as RGB if alpha is not used
 			format = gl.RGB
 			internalFormat = gl.RGB
@@ -447,7 +452,6 @@ func loadTextures(filePath string) uint32 {
 			}
 		}
 	case *image.NRGBA:
-		fmt.Printf("[%v] color format: NRGBA\n", filePath)
 		format = gl.RGBA
 		internalFormat = gl.RGBA
 		pixelData = make([]byte, width*height*4)
@@ -464,7 +468,6 @@ func loadTextures(filePath string) uint32 {
 		}
 	default:
 		// Handle RGB images without alpha channel
-		fmt.Printf("[%v] color format: RGB\n", filePath)
 		format = gl.RGB
 		internalFormat = gl.RGB
 		pixelData = make([]byte, width*height*3)
