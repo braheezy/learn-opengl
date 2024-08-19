@@ -49,7 +49,7 @@ go run . &
 # Capture it's PID
 PID=$!
 # Wait for it to finish launching
-sleep 1
+sleep 5
 # Get the child process it spawns, the actual OpenGL window
 CHILD_PID=$(pgrep -P $PID)
 
