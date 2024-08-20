@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"runtime"
-	"unsafe"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -33,49 +32,11 @@ var (
 	firstMouse = true
 	camera     *Camera
 
-	cubeVertices = []float32{
-		// positions
-		-0.5, -0.5, -0.5,
-		0.5, -0.5, -0.5,
-		0.5, 0.5, -0.5,
-		0.5, 0.5, -0.5,
-		-0.5, 0.5, -0.5,
-		-0.5, -0.5, -0.5,
-
-		-0.5, -0.5, 0.5,
-		0.5, -0.5, 0.5,
-		0.5, 0.5, 0.5,
-		0.5, 0.5, 0.5,
-		-0.5, 0.5, 0.5,
-		-0.5, -0.5, 0.5,
-
-		-0.5, 0.5, 0.5,
-		-0.5, 0.5, -0.5,
-		-0.5, -0.5, -0.5,
-		-0.5, -0.5, -0.5,
-		-0.5, -0.5, 0.5,
-		-0.5, 0.5, 0.5,
-
-		0.5, 0.5, 0.5,
-		0.5, 0.5, -0.5,
-		0.5, -0.5, -0.5,
-		0.5, -0.5, -0.5,
-		0.5, -0.5, 0.5,
-		0.5, 0.5, 0.5,
-
-		-0.5, -0.5, -0.5,
-		0.5, -0.5, -0.5,
-		0.5, -0.5, 0.5,
-		0.5, -0.5, 0.5,
-		-0.5, -0.5, 0.5,
-		-0.5, -0.5, -0.5,
-
-		-0.5, 0.5, -0.5,
-		0.5, 0.5, -0.5,
-		0.5, 0.5, 0.5,
-		0.5, 0.5, 0.5,
-		-0.5, 0.5, 0.5,
-		-0.5, 0.5, -0.5,
+	points = []float32{
+		-0.5, 0.5, 1.0, 0.0, 0.0, // top-left
+		0.5, 0.5, 0.0, 1.0, 0.0, // top-right
+		0.5, -0.5, 0.0, 0.0, 1.0, // bottom-right
+		-0.5, -0.5, 1.0, 1.0, 0.0, // bottom-left
 	}
 )
 
@@ -139,19 +100,11 @@ func main() {
 	/*
 	 * Build and compile our shader program
 	 */
-	redShader, err := NewShader("shaders/shader.vs", "shaders/red.fs")
+	shader, err := NewShader("shaders/shader.vs", "shaders/shader.fs", "")
 	if err != nil {
 		log.Fatal(err)
 	}
-	greenShader, err := NewShader("shaders/shader.vs", "shaders/green.fs")
-	if err != nil {
-		log.Fatal(err)
-	}
-	blueShader, err := NewShader("shaders/shader.vs", "shaders/blue.fs")
-	if err != nil {
-		log.Fatal(err)
-	}
-	yellowShader, err := NewShader("shaders/shader.vs", "shaders/yellow.fs")
+	normalShader, err := NewShader("shaders/normal.vs", "shaders/normal.fs", "shaders/normal.gs")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -161,44 +114,8 @@ func main() {
 	 */
 	customModel := Model{}
 	if drawModel {
-		customModel.LoadModel("assets/backpack/backpack.obj")
+		customModel.LoadModel("assets/backpack")
 	}
-
-	// cube VAO
-	var cubeVAO, cubeVBO uint32
-	gl.GenVertexArrays(1, &cubeVAO)
-	gl.GenBuffers(1, &cubeVBO)
-	gl.BindVertexArray(cubeVAO)
-	gl.BindBuffer(gl.ARRAY_BUFFER, cubeVBO)
-	gl.BufferData(gl.ARRAY_BUFFER, len(cubeVertices)*int(unsafe.Sizeof(cubeVertices[0])), gl.Ptr(cubeVertices), gl.STATIC_DRAW)
-	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(3*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
-
-	// configure a uniform buffer object
-	// first. We get the relevant block indices
-	uniformBlockIndexRed := gl.GetUniformBlockIndex(redShader.id, gl.Str("Matrices"+"\x00"))
-	uniformBlockIndexGreen := gl.GetUniformBlockIndex(greenShader.id, gl.Str("Matrices"+"\x00"))
-	uniformBlockIndexBlue := gl.GetUniformBlockIndex(blueShader.id, gl.Str("Matrices"+"\x00"))
-	uniformBlockIndexYellow := gl.GetUniformBlockIndex(yellowShader.id, gl.Str("Matrices"+"\x00"))
-	// then we link each shader's uniform block to this uniform binding point
-	gl.UniformBlockBinding(redShader.id, uniformBlockIndexRed, 0)
-	gl.UniformBlockBinding(greenShader.id, uniformBlockIndexGreen, 0)
-	gl.UniformBlockBinding(blueShader.id, uniformBlockIndexBlue, 0)
-	gl.UniformBlockBinding(yellowShader.id, uniformBlockIndexYellow, 0)
-	// Now actually create the buffer
-	var uboMatrices uint32
-	gl.GenBuffers(1, &uboMatrices)
-	gl.BindBuffer(gl.UNIFORM_BUFFER, uboMatrices)
-	gl.BufferData(gl.UNIFORM_BUFFER, int(2*unsafe.Sizeof(mgl32.Mat4{})), gl.Ptr(nil), gl.STATIC_DRAW)
-	gl.BindBuffer(gl.UNIFORM_BUFFER, 0)
-	// define the range of the buffer that links to a uniform binding point
-	gl.BindBufferRange(gl.UNIFORM_BUFFER, 0, uboMatrices, 0, int(2*unsafe.Sizeof(mgl32.Mat4{})))
-
-	// store the projection matrix (we only do this once now) (note: we're not using zoom anymore by changing the FoV)
-	projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), initialWindowWidth/initialWindowHeight, 0.1, 100.0)
-	gl.BindBuffer(gl.UNIFORM_BUFFER, uboMatrices)
-	gl.BufferSubData(gl.UNIFORM_BUFFER, 0, int(unsafe.Sizeof(mgl32.Mat4{})), gl.Ptr(&projection[0]))
-	gl.BindBuffer(gl.UNIFORM_BUFFER, 0)
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -214,41 +131,24 @@ func main() {
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		// set the view and projection matrix in the uniform block - we only have to do this once per loop iteration.
+		projection := mgl32.Perspective(mgl32.DegToRad(45.0), initialWindowWidth/initialWindowHeight, 1.0, 100.0)
 		view := camera.getViewMatrix()
-		gl.BindBuffer(gl.UNIFORM_BUFFER, uboMatrices)
-		gl.BufferSubData(gl.UNIFORM_BUFFER, int(unsafe.Sizeof(mgl32.Mat4{})), int(unsafe.Sizeof(mgl32.Mat4{})), gl.Ptr(&view[0]))
-		gl.BindBuffer(gl.UNIFORM_BUFFER, 0)
+		model := mgl32.Ident4()
+		shader.use()
+		shader.setMat4("projection", projection)
+		shader.setMat4("model", model)
+		shader.setMat4("view", view)
 
-		// draw 4 cubes
-		// RED
-		gl.BindVertexArray(cubeVAO)
-		redShader.use()
-		model := mgl32.Ident4().Mul4(mgl32.Translate3D(-0.75, 0.75, 0.0))
-		redShader.setMat4("model", model)
-		gl.DrawArrays(gl.TRIANGLES, 0, 36)
-		// GREEN
-		greenShader.use()
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(0.75, 0.75, 0.0))
-		greenShader.setMat4("model", model)
-		gl.DrawArrays(gl.TRIANGLES, 0, 36)
-		// YELLOW
-		yellowShader.use()
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(-0.75, -0.75, 0.0))
-		yellowShader.setMat4("model", model)
-		gl.DrawArrays(gl.TRIANGLES, 0, 36)
-		// BLUE
-		blueShader.use()
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(0.75, -0.75, 0.0))
-		blueShader.setMat4("model", model)
-		gl.DrawArrays(gl.TRIANGLES, 0, 36)
+		if drawModel {
+			customModel.Draw(*shader)
+		}
 
-		// if drawModel {
-		// 	model = model.Mul4(mgl32.Translate3D(0.0, 0.0, 0.0))
-		// 	model = model.Mul4(mgl32.Scale3D(1.0, 1.0, 1.0))
-		// 	shaderProgram.setMat4("model", model)
-		// 	customModel.Draw(*shaderProgram)
-		// }
+		normalShader.use()
+		normalShader.setMat4("projection", projection)
+		normalShader.setMat4("model", model)
+		normalShader.setMat4("view", view)
+
+		customModel.Draw(*normalShader)
 
 		// Swap the color buffer and poll events
 		window.SwapBuffers()

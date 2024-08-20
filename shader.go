@@ -13,7 +13,7 @@ type Shader struct {
 	id uint32
 }
 
-func NewShader(vertexPath string, fragmentPath string) (*Shader, error) {
+func NewShader(vertexPath string, fragmentPath string, geometryPath string) (*Shader, error) {
 	// Read shader programs from disk.
 	data, err := os.ReadFile(vertexPath)
 	if err != nil {
@@ -25,6 +25,23 @@ func NewShader(vertexPath string, fragmentPath string) (*Shader, error) {
 		return nil, err
 	}
 	fragmentShaderSource := string(data)
+
+	var geometryShader uint32
+
+	if geometryPath != "" {
+		data, err = os.ReadFile(geometryPath)
+		if err != nil {
+			return nil, err
+		}
+		geometryShaderSource := string(data)
+
+		geometryShader = gl.CreateShader(gl.GEOMETRY_SHADER)
+		sourceString, geometryFreeFunc := gl.Strs(geometryShaderSource, "\x00")
+		defer geometryFreeFunc()
+		gl.ShaderSource(geometryShader, 1, sourceString, nil)
+		gl.CompileShader(geometryShader)
+		checkCompile(geometryShader, "GEOMETRY")
+	}
 
 	// Create a vertex shader object ID
 	vertexShader := gl.CreateShader(gl.VERTEX_SHADER)
@@ -45,37 +62,40 @@ func NewShader(vertexPath string, fragmentPath string) (*Shader, error) {
 	gl.CompileShader(fragmentShader)
 
 	// Check shader compilation.
-	var success int32
-	infoLog := make([]uint8, 512)
-	gl.GetShaderiv(vertexShader, gl.COMPILE_STATUS, &success)
-	if success == gl.FALSE {
-		gl.GetShaderInfoLog(vertexShader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
-		return nil, fmt.Errorf("failed to compile vertex shader: %v", string(infoLog))
-	}
-	gl.GetShaderiv(fragmentShader, gl.COMPILE_STATUS, &success)
-	if success == gl.FALSE {
-		gl.GetShaderInfoLog(fragmentShader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
-		return nil, fmt.Errorf("failed to compile fragment shader: %v", string(infoLog))
-	}
+	checkCompile(fragmentShader, "VERTEX")
+	checkCompile(fragmentShader, "FRAGMENT")
 
 	// Link all shaders together to form a shader program, which is used during rendering.
 	ID := gl.CreateProgram()
 	gl.AttachShader(ID, vertexShader)
 	gl.AttachShader(ID, fragmentShader)
+	if geometryPath != "" {
+		gl.AttachShader(ID, geometryShader)
+	}
 	gl.LinkProgram(ID)
 
 	// Check program linking
-	gl.GetProgramiv(ID, gl.LINK_STATUS, &success)
-	if success == gl.FALSE {
-		gl.GetProgramInfoLog(ID, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
-		return nil, fmt.Errorf("failed to link shader program: %v", string(infoLog))
-	}
+	checkCompile(ID, "PROGRAM")
 
 	// Clean up shader objects
 	gl.DeleteShader(vertexShader)
 	gl.DeleteShader(fragmentShader)
+	if geometryPath != "" {
+		gl.DeleteShader(geometryShader)
+	}
 
 	return &Shader{id: ID}, nil
+}
+
+func checkCompile(shader uint32, shaderType string) error {
+	var success int32
+	infoLog := make([]uint8, 512)
+	gl.GetShaderiv(shader, gl.COMPILE_STATUS, &success)
+	if success == gl.FALSE {
+		gl.GetShaderInfoLog(shader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
+		return fmt.Errorf("failed to compile %v shader: %v", shaderType, string(infoLog))
+	}
+	return nil
 }
 
 func (s *Shader) use() {

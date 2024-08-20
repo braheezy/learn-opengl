@@ -22,9 +22,10 @@ type Model struct {
 
 // LoadModel loads the model from the given path.
 func (m *Model) LoadModel(path string) {
-	m.directory = filepath.Dir(path)
-	objPath := path
-	mtlPath := filepath.Join(m.directory, "backpack.mtl")
+	dirName := filepath.Base(path)
+	objPath := filepath.Join(path, dirName+".obj")
+	mtlPath := filepath.Join(path, dirName+".mtl")
+	m.directory = path
 
 	// Initialize texturesLoaded map if not already initialized
 	if m.texturesLoaded == nil {
