@@ -5,8 +5,12 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"log"
+	"maps"
+	"math"
+	"math/rand"
 	"os"
 	"runtime"
+	"unsafe"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -31,20 +35,13 @@ var (
 	// Handle when mouse first enters window and has large offset to center
 	firstMouse = true
 	camera     *Camera
-
-	points = []float32{
-		-0.5, 0.5, 1.0, 0.0, 0.0, // top-left
-		0.5, 0.5, 0.0, 1.0, 0.0, // top-right
-		0.5, -0.5, 0.0, 0.0, 1.0, // bottom-right
-		-0.5, -0.5, 1.0, 1.0, 0.0, // bottom-left
-	}
 )
 
 func init() {
 	// This is needed to arrange that main() runs on main thread.
 	runtime.LockOSThread()
 
-	camera = NewDefaultCameraAtPosition(mgl32.Vec3{0.0, 0.0, 3.0})
+	camera = NewDefaultCameraAtPosition(mgl32.Vec3{0.0, 0.0, 155.0})
 }
 
 func main() {
@@ -100,11 +97,11 @@ func main() {
 	/*
 	 * Build and compile our shader program
 	 */
-	shader, err := NewShader("shaders/shader.vs", "shaders/shader.fs", "")
+	asteroidShader, err := NewShader("shaders/asteroids.vs", "shaders/asteroids.fs", "")
 	if err != nil {
 		log.Fatal(err)
 	}
-	normalShader, err := NewShader("shaders/normal.vs", "shaders/normal.fs", "shaders/normal.gs")
+	planetShader, err := NewShader("shaders/planet.vs", "shaders/planet.fs", "")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -112,9 +109,66 @@ func main() {
 	/*
 	 * load models
 	 */
-	customModel := Model{}
-	if drawModel {
-		customModel.LoadModel("assets/backpack")
+	// if drawModel {
+	rock := LoadModel("assets/rock")
+	planet := LoadModel("assets/planet")
+	// }
+
+	// generate a large list of semi-random model transformation matrices
+	amount := 100000
+	modelMatrices := make([]mgl32.Mat4, amount)
+	radius := 150.0
+	offset := 25.0
+	for i := 0; i < amount; i++ {
+		model := mgl32.Ident4()
+		// 1. translation: displace along circle with 'radius' in range [-offset, offset]
+		angle := float64(i) / float64(amount) * 360.0
+		displacement := (rand.Int()%int(2*offset*100))/100.0 - int(offset)
+		x := math.Sin(angle)*radius + float64(displacement)
+		// keep height of asteroid field smaller compared to width of x and z
+		displacement = (rand.Int()%int(2*offset*100))/100.0 - int(offset)
+		y := float64(displacement) * 0.4
+		displacement = (rand.Int()%int(2*offset*100))/100.0 - int(offset)
+		z := math.Cos(angle)*radius + float64(displacement)
+		model = model.Mul4(mgl32.Translate3D(float32(x), float32(y), float32(z)))
+
+		// 2. scale: Scale between 0.05 and 0.25f
+		scale := float32(rand.Int()%20)/100.0 + 0.05
+		model = model.Mul4(mgl32.Scale3D(scale, scale, scale))
+
+		// 3. rotation: add random rotation around a (semi)randomly picked rotation axis vector
+		rotationAngle := rand.Int() % 360
+		model = model.Mul4(mgl32.HomogRotate3D(float32(rotationAngle), mgl32.Vec3{0.4, 0.6, 0.8}))
+
+		modelMatrices[i] = model
+	}
+
+	// configure instanced array
+	var buffer uint32
+	gl.GenBuffers(1, &buffer)
+	gl.BindBuffer(gl.ARRAY_BUFFER, buffer)
+	gl.BufferData(gl.ARRAY_BUFFER, amount*int(unsafe.Sizeof(mgl32.Mat4{})), gl.Ptr(modelMatrices), gl.STATIC_DRAW)
+
+	// set transformation matrices as an instance vertex attribute (with divisor 1)
+	// note: we're cheating a little by taking the, now publicly declared, VAO of the model's mesh(es) and adding new vertexAttribPointers
+	for _, mesh := range rock.meshes {
+		VAO := mesh.VAO
+		gl.BindVertexArray(VAO)
+		gl.EnableVertexAttribArray(3)
+		gl.VertexAttribPointer(3, 4, gl.FLOAT, false, int32(unsafe.Sizeof(mgl32.Mat4{})), gl.Ptr(nil))
+		gl.EnableVertexAttribArray(4)
+		gl.VertexAttribPointer(4, 4, gl.FLOAT, false, int32(unsafe.Sizeof(mgl32.Mat4{})), gl.Ptr(unsafe.Sizeof(mgl32.Vec4{})))
+		gl.EnableVertexAttribArray(5)
+		gl.VertexAttribPointer(5, 4, gl.FLOAT, false, int32(unsafe.Sizeof(mgl32.Mat4{})), gl.Ptr(2*unsafe.Sizeof(mgl32.Vec4{})))
+		gl.EnableVertexAttribArray(6)
+		gl.VertexAttribPointer(6, 4, gl.FLOAT, false, int32(unsafe.Sizeof(mgl32.Mat4{})), gl.Ptr(3*unsafe.Sizeof(mgl32.Vec4{})))
+
+		gl.VertexAttribDivisor(3, 1)
+		gl.VertexAttribDivisor(4, 1)
+		gl.VertexAttribDivisor(5, 1)
+		gl.VertexAttribDivisor(6, 1)
+
+		gl.BindVertexArray(0)
 	}
 
 	// Run the render loop until the window is closed by the user.
@@ -131,24 +185,38 @@ func main() {
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		projection := mgl32.Perspective(mgl32.DegToRad(45.0), initialWindowWidth/initialWindowHeight, 1.0, 100.0)
+		// configure transformation matrices
+		projection := mgl32.Perspective(mgl32.DegToRad(45.0), initialWindowWidth/initialWindowHeight, 0.1, 1000.0)
 		view := camera.getViewMatrix()
-		model := mgl32.Ident4()
-		shader.use()
-		shader.setMat4("projection", projection)
-		shader.setMat4("model", model)
-		shader.setMat4("view", view)
+		asteroidShader.use()
+		asteroidShader.setMat4("projection", projection)
+		asteroidShader.setMat4("view", view)
 
-		if drawModel {
-			customModel.Draw(*shader)
+		planetShader.use()
+		planetShader.setMat4("projection", projection)
+		planetShader.setMat4("view", view)
+
+		// draw planet
+		model := mgl32.Ident4().Mul4(mgl32.Translate3D(0.0, -3.0, 0.0))
+		model = model.Mul4(mgl32.Scale3D(4.0, 4.0, 4.0))
+		planetShader.setMat4("model", model)
+		planet.Draw(*planetShader)
+
+		// draw meteorites
+		asteroidShader.use()
+		asteroidShader.setInt("texture_diffuse1", 0)
+		gl.ActiveTexture(gl.TEXTURE0)
+		var bindTexture Texture
+		for texture := range maps.Values(rock.texturesLoaded) {
+			bindTexture = texture
+			break
 		}
-
-		normalShader.use()
-		normalShader.setMat4("projection", projection)
-		normalShader.setMat4("model", model)
-		normalShader.setMat4("view", view)
-
-		customModel.Draw(*normalShader)
+		gl.BindTexture(gl.TEXTURE_2D, bindTexture.ID)
+		for _, mesh := range rock.meshes {
+			gl.BindVertexArray(mesh.VAO)
+			gl.DrawElementsInstanced(gl.TRIANGLES, int32(len(mesh.indices)), gl.UNSIGNED_INT, gl.Ptr(nil), int32(amount))
+			gl.BindVertexArray(0)
+		}
 
 		// Swap the color buffer and poll events
 		window.SwapBuffers()

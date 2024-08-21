@@ -21,7 +21,8 @@ type Model struct {
 }
 
 // LoadModel loads the model from the given path.
-func (m *Model) LoadModel(path string) {
+func LoadModel(path string) *Model {
+	m := &Model{}
 	dirName := filepath.Base(path)
 	objPath := filepath.Join(path, dirName+".obj")
 	mtlPath := filepath.Join(path, dirName+".mtl")
@@ -50,6 +51,8 @@ func (m *Model) LoadModel(path string) {
 		mesh := m.processMesh(group, obj, mtlLib)
 		m.meshes = append(m.meshes, mesh)
 	}
+
+	return m
 }
 
 // processMesh processes a group in the OBJ file and converts it into a Mesh structure.
