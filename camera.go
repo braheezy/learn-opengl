@@ -40,7 +40,7 @@ func newCamera() *Camera {
 		pitch:            0.0,
 		zoom:             45.0,
 		mouseSensitivity: 0.1,
-		movementSpeed:    25,
+		movementSpeed:    5,
 	}
 	return &c
 }

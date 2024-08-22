@@ -5,9 +5,6 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"log"
-	"maps"
-	"math"
-	"math/rand"
 	"os"
 	"runtime"
 	"unsafe"
@@ -19,9 +16,9 @@ import (
 
 // Settings
 const (
-	initialWindowWidth  = 800
-	initialWindowHeight = 600
-	drawModel           = true
+	windowWidth  = 800
+	windowHeight = 600
+	drawModel    = true
 )
 
 var (
@@ -30,18 +27,73 @@ var (
 	deltaTime = 0.0 // time between current frame and last frame
 	lastFrame = 0.0 // time of last frame
 	// Last mouse positions, initially in the center of the window
-	lastX = float64(initialWindowWidth / 2)
-	lastY = float64(initialWindowHeight / 2)
+	lastX = float64(windowWidth / 2)
+	lastY = float64(windowHeight / 2)
 	// Handle when mouse first enters window and has large offset to center
 	firstMouse = true
 	camera     *Camera
+
+	cubeVertices = []float32{
+		// positions
+		-0.5, -0.5, -0.5,
+		0.5, -0.5, -0.5,
+		0.5, 0.5, -0.5,
+		0.5, 0.5, -0.5,
+		-0.5, 0.5, -0.5,
+		-0.5, -0.5, -0.5,
+
+		-0.5, -0.5, 0.5,
+		0.5, -0.5, 0.5,
+		0.5, 0.5, 0.5,
+		0.5, 0.5, 0.5,
+		-0.5, 0.5, 0.5,
+		-0.5, -0.5, 0.5,
+
+		-0.5, 0.5, 0.5,
+		-0.5, 0.5, -0.5,
+		-0.5, -0.5, -0.5,
+		-0.5, -0.5, -0.5,
+		-0.5, -0.5, 0.5,
+		-0.5, 0.5, 0.5,
+
+		0.5, 0.5, 0.5,
+		0.5, 0.5, -0.5,
+		0.5, -0.5, -0.5,
+		0.5, -0.5, -0.5,
+		0.5, -0.5, 0.5,
+		0.5, 0.5, 0.5,
+
+		-0.5, -0.5, -0.5,
+		0.5, -0.5, -0.5,
+		0.5, -0.5, 0.5,
+		0.5, -0.5, 0.5,
+		-0.5, -0.5, 0.5,
+		-0.5, -0.5, -0.5,
+
+		-0.5, 0.5, -0.5,
+		0.5, 0.5, -0.5,
+		0.5, 0.5, 0.5,
+		0.5, 0.5, 0.5,
+		-0.5, 0.5, 0.5,
+		-0.5, 0.5, -0.5,
+	}
+	quadVertices = []float32{ // vertex attributes for a quad that fills the entire screen in Normalized Device Coordinates.
+		// positions   // texCoords
+		-1.0, 1.0, 0.0, 1.0,
+		-1.0, -1.0, 0.0, 0.0,
+		1.0, -1.0, 1.0, 0.0,
+
+		-1.0, 1.0, 0.0, 1.0,
+		1.0, -1.0, 1.0, 0.0,
+		1.0, 1.0, 1.0, 1.0,
+	}
 )
 
 func init() {
 	// This is needed to arrange that main() runs on main thread.
 	runtime.LockOSThread()
 
-	camera = NewDefaultCameraAtPosition(mgl32.Vec3{0.0, 0.0, 155.0})
+	camera = NewDefaultCameraAtPosition(mgl32.Vec3{0.0, 0.0, 3.0})
 }
 
 func main() {
@@ -66,7 +118,7 @@ func main() {
 	 * GLFW window creation
 	 */
 	// Create the window object, the required central object to most of GLFW's functions.
-	window, err := glfw.CreateWindow(initialWindowWidth, initialWindowHeight, "LearnOpenGL", nil, nil)
+	window, err := glfw.CreateWindow(windowWidth, windowHeight, "LearnOpenGL", nil, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -97,79 +149,78 @@ func main() {
 	/*
 	 * Build and compile our shader program
 	 */
-	asteroidShader, err := NewShader("shaders/asteroids.vs", "shaders/asteroids.fs", "")
+	shader, err := NewShader("shaders/shader.vs", "shaders/shader.fs", "")
 	if err != nil {
 		log.Fatal(err)
 	}
-	planetShader, err := NewShader("shaders/planet.vs", "shaders/planet.fs", "")
+	screenShader, err := NewShader("shaders/screen.vs", "shaders/screen.fs", "")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	/*
-	 * load models
-	 */
-	// if drawModel {
-	rock := LoadModel("assets/rock")
-	planet := LoadModel("assets/planet")
-	// }
+	// setup cube VAO
+	var cubeVAO, cubeVBO uint32
+	gl.GenVertexArrays(1, &cubeVAO)
+	gl.GenBuffers(1, &cubeVBO)
+	gl.BindVertexArray(cubeVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, cubeVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, len(cubeVertices)*int(unsafe.Sizeof(cubeVertices[0])), gl.Ptr(cubeVertices), gl.STATIC_DRAW)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(3*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	// setup screen VAO
+	var quadVAO, quadVBO uint32
+	gl.GenVertexArrays(1, &quadVAO)
+	gl.GenBuffers(1, &quadVBO)
+	gl.BindVertexArray(quadVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, quadVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, len(quadVertices)*int(unsafe.Sizeof(quadVertices[0])), gl.Ptr(quadVertices), gl.STATIC_DRAW)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, int32(4*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	gl.EnableVertexAttribArray(1)
+	gl.VertexAttribPointer(1, 2, gl.FLOAT, false, int32(4*unsafe.Sizeof(float32(0))), gl.Ptr(2*unsafe.Sizeof(float32(0))))
 
-	// generate a large list of semi-random model transformation matrices
-	amount := 100000
-	modelMatrices := make([]mgl32.Mat4, amount)
-	radius := 150.0
-	offset := 25.0
-	for i := 0; i < amount; i++ {
-		model := mgl32.Ident4()
-		// 1. translation: displace along circle with 'radius' in range [-offset, offset]
-		angle := float64(i) / float64(amount) * 360.0
-		displacement := (rand.Int()%int(2*offset*100))/100.0 - int(offset)
-		x := math.Sin(angle)*radius + float64(displacement)
-		// keep height of asteroid field smaller compared to width of x and z
-		displacement = (rand.Int()%int(2*offset*100))/100.0 - int(offset)
-		y := float64(displacement) * 0.4
-		displacement = (rand.Int()%int(2*offset*100))/100.0 - int(offset)
-		z := math.Cos(angle)*radius + float64(displacement)
-		model = model.Mul4(mgl32.Translate3D(float32(x), float32(y), float32(z)))
-
-		// 2. scale: Scale between 0.05 and 0.25f
-		scale := float32(rand.Int()%20)/100.0 + 0.05
-		model = model.Mul4(mgl32.Scale3D(scale, scale, scale))
-
-		// 3. rotation: add random rotation around a (semi)randomly picked rotation axis vector
-		rotationAngle := rand.Int() % 360
-		model = model.Mul4(mgl32.HomogRotate3D(float32(rotationAngle), mgl32.Vec3{0.4, 0.6, 0.8}))
-
-		modelMatrices[i] = model
+	// configure MSAA framebuffer
+	var framebuffer uint32
+	gl.GenFramebuffers(1, &framebuffer)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, framebuffer)
+	// create a multisampled color attachment texture
+	var textureColorBufferMultiSampled uint32
+	gl.GenTextures(1, &textureColorBufferMultiSampled)
+	gl.BindTexture(gl.TEXTURE_2D_MULTISAMPLE, textureColorBufferMultiSampled)
+	gl.TexImage2DMultisample(gl.TEXTURE_2D_MULTISAMPLE, 4, gl.RGB, windowWidth, windowHeight, true)
+	gl.BindTexture(gl.TEXTURE_2D_MULTISAMPLE, 0)
+	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D_MULTISAMPLE, textureColorBufferMultiSampled, 0)
+	// create a (also multisampled) renderbuffer object for depth and stencil attachments
+	var rbo uint32
+	gl.GenRenderbuffers(1, &rbo)
+	gl.BindRenderbuffer(gl.RENDERBUFFER, rbo)
+	gl.RenderbufferStorageMultisample(gl.RENDERBUFFER, 4, gl.DEPTH24_STENCIL8, windowWidth, windowHeight)
+	gl.BindRenderbuffer(gl.RENDERBUFFER, 0)
+	gl.FramebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, rbo)
+	if gl.CheckFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE {
+		log.Fatalf("error creating framebuffer")
 	}
+	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 
-	// configure instanced array
-	var buffer uint32
-	gl.GenBuffers(1, &buffer)
-	gl.BindBuffer(gl.ARRAY_BUFFER, buffer)
-	gl.BufferData(gl.ARRAY_BUFFER, amount*int(unsafe.Sizeof(mgl32.Mat4{})), gl.Ptr(modelMatrices), gl.STATIC_DRAW)
-
-	// set transformation matrices as an instance vertex attribute (with divisor 1)
-	// note: we're cheating a little by taking the, now publicly declared, VAO of the model's mesh(es) and adding new vertexAttribPointers
-	for _, mesh := range rock.meshes {
-		VAO := mesh.VAO
-		gl.BindVertexArray(VAO)
-		gl.EnableVertexAttribArray(3)
-		gl.VertexAttribPointer(3, 4, gl.FLOAT, false, int32(unsafe.Sizeof(mgl32.Mat4{})), gl.Ptr(nil))
-		gl.EnableVertexAttribArray(4)
-		gl.VertexAttribPointer(4, 4, gl.FLOAT, false, int32(unsafe.Sizeof(mgl32.Mat4{})), gl.Ptr(unsafe.Sizeof(mgl32.Vec4{})))
-		gl.EnableVertexAttribArray(5)
-		gl.VertexAttribPointer(5, 4, gl.FLOAT, false, int32(unsafe.Sizeof(mgl32.Mat4{})), gl.Ptr(2*unsafe.Sizeof(mgl32.Vec4{})))
-		gl.EnableVertexAttribArray(6)
-		gl.VertexAttribPointer(6, 4, gl.FLOAT, false, int32(unsafe.Sizeof(mgl32.Mat4{})), gl.Ptr(3*unsafe.Sizeof(mgl32.Vec4{})))
-
-		gl.VertexAttribDivisor(3, 1)
-		gl.VertexAttribDivisor(4, 1)
-		gl.VertexAttribDivisor(5, 1)
-		gl.VertexAttribDivisor(6, 1)
-
-		gl.BindVertexArray(0)
+	// configure second post-processing framebuffer
+	var intermediateFBO uint32
+	gl.GenFramebuffers(1, &intermediateFBO)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, intermediateFBO)
+	// create a color attachment texture
+	var screenTexture uint32
+	gl.GenTextures(1, &screenTexture)
+	gl.BindTexture(gl.TEXTURE_2D, screenTexture)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, windowWidth, windowHeight, 0, gl.RGB, gl.UNSIGNED_BYTE, gl.Ptr(nil))
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, screenTexture, 0)
+	if gl.CheckFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE {
+		log.Fatalf("error creating second framebuffer")
 	}
+	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+
+	screenShader.use()
+	screenShader.setInt("screenTexture", 0)
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -185,38 +236,38 @@ func main() {
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
+		// 1. draw scene as normal in multisampled buffers
+		gl.BindFramebuffer(gl.FRAMEBUFFER, framebuffer)
+		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+		gl.Enable(gl.DEPTH_TEST)
+
 		// configure transformation matrices
-		projection := mgl32.Perspective(mgl32.DegToRad(45.0), initialWindowWidth/initialWindowHeight, 0.1, 1000.0)
-		view := camera.getViewMatrix()
-		asteroidShader.use()
-		asteroidShader.setMat4("projection", projection)
-		asteroidShader.setMat4("view", view)
+		shader.use()
+		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), windowWidth/windowHeight, 0.1, 1000.0)
+		shader.setMat4("projection", projection)
+		shader.setMat4("view", camera.getViewMatrix())
+		shader.setMat4("model", mgl32.Ident4())
 
-		planetShader.use()
-		planetShader.setMat4("projection", projection)
-		planetShader.setMat4("view", view)
+		gl.BindVertexArray(cubeVAO)
+		gl.DrawArrays(gl.TRIANGLES, 0, 36)
 
-		// draw planet
-		model := mgl32.Ident4().Mul4(mgl32.Translate3D(0.0, -3.0, 0.0))
-		model = model.Mul4(mgl32.Scale3D(4.0, 4.0, 4.0))
-		planetShader.setMat4("model", model)
-		planet.Draw(*planetShader)
+		// 2. now blit multisampled buffer(s) to normal colorbuffer of intermediate FBO. Image is stored in screenTexture
+		gl.BindFramebuffer(gl.READ_FRAMEBUFFER, framebuffer)
+		gl.BindFramebuffer(gl.DRAW_FRAMEBUFFER, intermediateFBO)
+		gl.BlitFramebuffer(0, 0, windowWidth, windowHeight, 0, 0, windowWidth, windowHeight, gl.COLOR_BUFFER_BIT, gl.NEAREST)
 
-		// draw meteorites
-		asteroidShader.use()
-		asteroidShader.setInt("texture_diffuse1", 0)
-		gl.ActiveTexture(gl.TEXTURE0)
-		var bindTexture Texture
-		for texture := range maps.Values(rock.texturesLoaded) {
-			bindTexture = texture
-			break
-		}
-		gl.BindTexture(gl.TEXTURE_2D, bindTexture.ID)
-		for _, mesh := range rock.meshes {
-			gl.BindVertexArray(mesh.VAO)
-			gl.DrawElementsInstanced(gl.TRIANGLES, int32(len(mesh.indices)), gl.UNSIGNED_INT, gl.Ptr(nil), int32(amount))
-			gl.BindVertexArray(0)
-		}
+		// 3. now render quad with scene's visuals as its texture image
+		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+		gl.ClearColor(1.0, 1.0, 1.0, 1.0)
+		gl.Clear(gl.COLOR_BUFFER_BIT)
+		gl.Disable(gl.DEPTH_TEST)
+
+		// draw screen quad
+		screenShader.use()
+		gl.BindVertexArray(quadVAO)
+		gl.BindTexture(gl.TEXTURE_2D, screenTexture)
+		gl.DrawArrays(gl.TRIANGLES, 0, 6)
 
 		// Swap the color buffer and poll events
 		window.SwapBuffers()
