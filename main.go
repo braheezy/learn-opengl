@@ -30,62 +30,20 @@ var (
 	lastX = float64(windowWidth / 2)
 	lastY = float64(windowHeight / 2)
 	// Handle when mouse first enters window and has large offset to center
-	firstMouse = true
-	camera     *Camera
+	firstMouse      = true
+	camera          *Camera
+	blinn           = false
+	blinnKeyPressed = false
 
-	cubeVertices = []float32{
-		// positions
-		-0.5, -0.5, -0.5,
-		0.5, -0.5, -0.5,
-		0.5, 0.5, -0.5,
-		0.5, 0.5, -0.5,
-		-0.5, 0.5, -0.5,
-		-0.5, -0.5, -0.5,
+	planeVertices = []float32{
+		// positions            // normals         // texcoords
+		10.0, -0.5, 10.0, 0.0, 1.0, 0.0, 10.0, 0.0,
+		-10.0, -0.5, 10.0, 0.0, 1.0, 0.0, 0.0, 0.0,
+		-10.0, -0.5, -10.0, 0.0, 1.0, 0.0, 0.0, 10.0,
 
-		-0.5, -0.5, 0.5,
-		0.5, -0.5, 0.5,
-		0.5, 0.5, 0.5,
-		0.5, 0.5, 0.5,
-		-0.5, 0.5, 0.5,
-		-0.5, -0.5, 0.5,
-
-		-0.5, 0.5, 0.5,
-		-0.5, 0.5, -0.5,
-		-0.5, -0.5, -0.5,
-		-0.5, -0.5, -0.5,
-		-0.5, -0.5, 0.5,
-		-0.5, 0.5, 0.5,
-
-		0.5, 0.5, 0.5,
-		0.5, 0.5, -0.5,
-		0.5, -0.5, -0.5,
-		0.5, -0.5, -0.5,
-		0.5, -0.5, 0.5,
-		0.5, 0.5, 0.5,
-
-		-0.5, -0.5, -0.5,
-		0.5, -0.5, -0.5,
-		0.5, -0.5, 0.5,
-		0.5, -0.5, 0.5,
-		-0.5, -0.5, 0.5,
-		-0.5, -0.5, -0.5,
-
-		-0.5, 0.5, -0.5,
-		0.5, 0.5, -0.5,
-		0.5, 0.5, 0.5,
-		0.5, 0.5, 0.5,
-		-0.5, 0.5, 0.5,
-		-0.5, 0.5, -0.5,
-	}
-	quadVertices = []float32{ // vertex attributes for a quad that fills the entire screen in Normalized Device Coordinates.
-		// positions   // texCoords
-		-1.0, 1.0, 0.0, 1.0,
-		-1.0, -1.0, 0.0, 0.0,
-		1.0, -1.0, 1.0, 0.0,
-
-		-1.0, 1.0, 0.0, 1.0,
-		1.0, -1.0, 1.0, 0.0,
-		1.0, 1.0, 1.0, 1.0,
+		10.0, -0.5, 10.0, 0.0, 1.0, 0.0, 10.0, 0.0,
+		-10.0, -0.5, -10.0, 0.0, 1.0, 0.0, 0.0, 10.0,
+		10.0, -0.5, -10.0, 0.0, 1.0, 0.0, 10.0, 10.0,
 	}
 )
 
@@ -145,6 +103,8 @@ func main() {
 	// Allow OpenGL to perform depth testing, where it uses the z-buffer to know when (not) to
 	// draw overlapping entities
 	gl.Enable(gl.DEPTH_TEST)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 
 	/*
 	 * Build and compile our shader program
@@ -153,74 +113,28 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	screenShader, err := NewShader("shaders/screen.vs", "shaders/screen.fs", "")
-	if err != nil {
-		log.Fatal(err)
-	}
 
-	// setup cube VAO
-	var cubeVAO, cubeVBO uint32
-	gl.GenVertexArrays(1, &cubeVAO)
-	gl.GenBuffers(1, &cubeVBO)
-	gl.BindVertexArray(cubeVAO)
-	gl.BindBuffer(gl.ARRAY_BUFFER, cubeVBO)
-	gl.BufferData(gl.ARRAY_BUFFER, len(cubeVertices)*int(unsafe.Sizeof(cubeVertices[0])), gl.Ptr(cubeVertices), gl.STATIC_DRAW)
+	// plane VAO
+	var planeVAO, planeVBO uint32
+	gl.GenVertexArrays(1, &planeVAO)
+	gl.GenBuffers(1, &planeVBO)
+	gl.BindVertexArray(planeVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, planeVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, len(planeVertices)*int(unsafe.Sizeof(planeVertices[0])), gl.Ptr(planeVertices), gl.STATIC_DRAW)
 	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(3*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
-	// setup screen VAO
-	var quadVAO, quadVBO uint32
-	gl.GenVertexArrays(1, &quadVAO)
-	gl.GenBuffers(1, &quadVBO)
-	gl.BindVertexArray(quadVAO)
-	gl.BindBuffer(gl.ARRAY_BUFFER, quadVBO)
-	gl.BufferData(gl.ARRAY_BUFFER, len(quadVertices)*int(unsafe.Sizeof(quadVertices[0])), gl.Ptr(quadVertices), gl.STATIC_DRAW)
-	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 2, gl.FLOAT, false, int32(4*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
 	gl.EnableVertexAttribArray(1)
-	gl.VertexAttribPointer(1, 2, gl.FLOAT, false, int32(4*unsafe.Sizeof(float32(0))), gl.Ptr(2*unsafe.Sizeof(float32(0))))
+	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
+	gl.EnableVertexAttribArray(2)
+	gl.VertexAttribPointer(2, 2, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(6*unsafe.Sizeof(float32(0))))
+	gl.BindVertexArray(0)
 
-	// configure MSAA framebuffer
-	var framebuffer uint32
-	gl.GenFramebuffers(1, &framebuffer)
-	gl.BindFramebuffer(gl.FRAMEBUFFER, framebuffer)
-	// create a multisampled color attachment texture
-	var textureColorBufferMultiSampled uint32
-	gl.GenTextures(1, &textureColorBufferMultiSampled)
-	gl.BindTexture(gl.TEXTURE_2D_MULTISAMPLE, textureColorBufferMultiSampled)
-	gl.TexImage2DMultisample(gl.TEXTURE_2D_MULTISAMPLE, 4, gl.RGB, windowWidth, windowHeight, true)
-	gl.BindTexture(gl.TEXTURE_2D_MULTISAMPLE, 0)
-	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D_MULTISAMPLE, textureColorBufferMultiSampled, 0)
-	// create a (also multisampled) renderbuffer object for depth and stencil attachments
-	var rbo uint32
-	gl.GenRenderbuffers(1, &rbo)
-	gl.BindRenderbuffer(gl.RENDERBUFFER, rbo)
-	gl.RenderbufferStorageMultisample(gl.RENDERBUFFER, 4, gl.DEPTH24_STENCIL8, windowWidth, windowHeight)
-	gl.BindRenderbuffer(gl.RENDERBUFFER, 0)
-	gl.FramebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, rbo)
-	if gl.CheckFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE {
-		log.Fatalf("error creating framebuffer")
-	}
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+	floorTexture := loadTextures("assets/wood.png")
 
-	// configure second post-processing framebuffer
-	var intermediateFBO uint32
-	gl.GenFramebuffers(1, &intermediateFBO)
-	gl.BindFramebuffer(gl.FRAMEBUFFER, intermediateFBO)
-	// create a color attachment texture
-	var screenTexture uint32
-	gl.GenTextures(1, &screenTexture)
-	gl.BindTexture(gl.TEXTURE_2D, screenTexture)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, windowWidth, windowHeight, 0, gl.RGB, gl.UNSIGNED_BYTE, gl.Ptr(nil))
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, screenTexture, 0)
-	if gl.CheckFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE {
-		log.Fatalf("error creating second framebuffer")
-	}
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+	shader.use()
+	shader.setInt("texture1", 0)
 
-	screenShader.use()
-	screenShader.setInt("screenTexture", 0)
+	lightPos := mgl32.Vec3{}
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -236,37 +150,22 @@ func main() {
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		// 1. draw scene as normal in multisampled buffers
-		gl.BindFramebuffer(gl.FRAMEBUFFER, framebuffer)
-		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
-		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-		gl.Enable(gl.DEPTH_TEST)
-
-		// configure transformation matrices
+		// draw objects
 		shader.use()
 		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), windowWidth/windowHeight, 0.1, 1000.0)
 		shader.setMat4("projection", projection)
 		shader.setMat4("view", camera.getViewMatrix())
-		shader.setMat4("model", mgl32.Ident4())
-
-		gl.BindVertexArray(cubeVAO)
-		gl.DrawArrays(gl.TRIANGLES, 0, 36)
-
-		// 2. now blit multisampled buffer(s) to normal colorbuffer of intermediate FBO. Image is stored in screenTexture
-		gl.BindFramebuffer(gl.READ_FRAMEBUFFER, framebuffer)
-		gl.BindFramebuffer(gl.DRAW_FRAMEBUFFER, intermediateFBO)
-		gl.BlitFramebuffer(0, 0, windowWidth, windowHeight, 0, 0, windowWidth, windowHeight, gl.COLOR_BUFFER_BIT, gl.NEAREST)
-
-		// 3. now render quad with scene's visuals as its texture image
-		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
-		gl.ClearColor(1.0, 1.0, 1.0, 1.0)
-		gl.Clear(gl.COLOR_BUFFER_BIT)
-		gl.Disable(gl.DEPTH_TEST)
-
-		// draw screen quad
-		screenShader.use()
-		gl.BindVertexArray(quadVAO)
-		gl.BindTexture(gl.TEXTURE_2D, screenTexture)
+		shader.setVec3("viewPos", camera.position)
+		shader.setVec3("lightPos", lightPos)
+		if blinn {
+			shader.setInt("blinn", 1)
+		} else {
+			shader.setInt("blinn", 0)
+		}
+		// floor
+		gl.BindVertexArray(planeVAO)
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_2D, floorTexture)
 		gl.DrawArrays(gl.TRIANGLES, 0, 6)
 
 		// Swap the color buffer and poll events
@@ -320,6 +219,13 @@ func processInput(w *glfw.Window) {
 	}
 	if w.GetKey(glfw.KeyD) == glfw.Press {
 		camera.processKeyboard(RIGHT, float32(deltaTime))
+	}
+	if w.GetKey(glfw.KeyB) == glfw.Press && !blinnKeyPressed {
+		blinn = !blinn
+		blinnKeyPressed = true
+	}
+	if w.GetKey(glfw.KeyB) == glfw.Release {
+		blinnKeyPressed = false
 	}
 
 	if w.GetKey(glfw.KeyLeftShift) == glfw.Press {
