@@ -16,9 +16,11 @@ import (
 
 // Settings
 const (
-	windowWidth  = 800
-	windowHeight = 600
-	drawModel    = true
+	windowWidth   = 800
+	windowHeight  = 600
+	SHADOW_WIDTH  = 1024
+	SHADOW_HEIGHT = 1024
+	drawModel     = true
 )
 
 var (
@@ -35,15 +37,17 @@ var (
 	gammaEnabled    = false
 	gammaKeyPressed = false
 
+	planeVAO uint32
+
 	planeVertices = []float32{
 		// positions            // normals         // texcoords
-		10.0, -0.5, 10.0, 0.0, 1.0, 0.0, 10.0, 0.0,
-		-10.0, -0.5, 10.0, 0.0, 1.0, 0.0, 0.0, 0.0,
-		-10.0, -0.5, -10.0, 0.0, 1.0, 0.0, 0.0, 10.0,
+		25.0, -0.5, 25.0, 0.0, 1.0, 0.0, 25.0, 0.0,
+		-25.0, -0.5, 25.0, 0.0, 1.0, 0.0, 0.0, 0.0,
+		-25.0, -0.5, -25.0, 0.0, 1.0, 0.0, 0.0, 25.0,
 
-		10.0, -0.5, 10.0, 0.0, 1.0, 0.0, 10.0, 0.0,
-		-10.0, -0.5, -10.0, 0.0, 1.0, 0.0, 0.0, 10.0,
-		10.0, -0.5, -10.0, 0.0, 1.0, 0.0, 10.0, 10.0,
+		25.0, -0.5, 25.0, 0.0, 1.0, 0.0, 25.0, 0.0,
+		-25.0, -0.5, -25.0, 0.0, 1.0, 0.0, 0.0, 25.0,
+		25.0, -0.5, -25.0, 0.0, 1.0, 0.0, 25.0, 25.0,
 	}
 )
 
@@ -103,8 +107,6 @@ func main() {
 	// Allow OpenGL to perform depth testing, where it uses the z-buffer to know when (not) to
 	// draw overlapping entities
 	gl.Enable(gl.DEPTH_TEST)
-	gl.Enable(gl.BLEND)
-	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 
 	/*
 	 * Build and compile our shader program
@@ -113,9 +115,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	simpleDepthShader, err := NewShader("shaders/depth.vs", "shaders/depth.fs", "")
+	if err != nil {
+		log.Fatal(err)
+	}
+	debugDepthQuad, err := NewShader("shaders/quad.vs", "shaders/quad.fs", "")
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// plane VAO
-	var planeVAO, planeVBO uint32
+	var planeVBO uint32
 	gl.GenVertexArrays(1, &planeVAO)
 	gl.GenBuffers(1, &planeVBO)
 	gl.BindVertexArray(planeVAO)
@@ -129,24 +139,34 @@ func main() {
 	gl.VertexAttribPointer(2, 2, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(6*unsafe.Sizeof(float32(0))))
 	gl.BindVertexArray(0)
 
-	floorTexture := loadTextures("assets/wood.png", false)
-	floorTextureGammaCorrected := loadTextures("assets/wood.png", true)
+	woodTexture := loadTextures("assets/wood.png", false)
+	var depthMapFBO uint32
+	gl.GenFramebuffers(1, &depthMapFBO)
+	// create depth texture
+	var depthMap uint32
+	gl.GenTextures(1, &depthMap)
+	gl.BindTexture(gl.TEXTURE_2D, depthMap)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, gl.DEPTH_COMPONENT, gl.FLOAT, gl.Ptr(nil))
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_BORDER)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_BORDER)
+	borderColor := []float32{1.0, 1.0, 1.0, 1.0}
+	gl.TexParameterfv(gl.TEXTURE_2D, gl.TEXTURE_BORDER_COLOR, &borderColor[0])
+	// attach depth texture as FBO's depth buffer
+	gl.BindFramebuffer(gl.FRAMEBUFFER, depthMapFBO)
+	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthMap, 0)
+	gl.DrawBuffer(gl.NONE)
+	gl.ReadBuffer(gl.NONE)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 
 	shader.use()
-	shader.setInt("floorTexture", 0)
+	shader.setInt("diffuseTexture", 0)
+	shader.setInt("shadowMap", 1)
+	debugDepthQuad.use()
+	debugDepthQuad.setInt("depthMap", 0)
 
-	lightPositions := []mgl32.Vec3{
-		{-3.0, 0.0, 0.0},
-		{-1.0, 0.0, 0.0},
-		{1.0, 0.0, 0.0},
-		{3.0, 0.0, 0.0},
-	}
-	lightColors := []mgl32.Vec3{
-		{0.25, 0.25, 0.25},
-		{0.50, 0.50, 0.50},
-		{0.75, 0.75, 0.75},
-		{1.0, 1.0, 1.0},
-	}
+	lightPos := mgl32.Vec3{-2.0, 4.0, -1.0}
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -162,27 +182,49 @@ func main() {
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		// draw objects
+		// 1. render depth of scene to texture (from light's perspective)
+		near_plane := float32(1.0)
+		far_plane := float32(7.5)
+		lightProjection := mgl32.Ortho(-10.0, 10.0, -10.0, 10.0, near_plane, far_plane)
+		lightView := mgl32.LookAt(lightPos[0], lightPos[1], lightPos[2], 0.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+		lightSpaceMatrix := lightProjection.Mul4(lightView)
+		// render scene from light's point of view
+		simpleDepthShader.use()
+		simpleDepthShader.setMat4("lightSpaceMatrix", lightSpaceMatrix)
+
+		gl.Viewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT)
+		gl.BindFramebuffer(gl.FRAMEBUFFER, depthMapFBO)
+		gl.Clear(gl.DEPTH_BUFFER_BIT)
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_2D, woodTexture)
+		renderScene(simpleDepthShader)
+		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+
+		// reset viewport
+		gl.Viewport(0, 0, windowWidth, windowHeight)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+		// 2. render scene as normal using the generated depth/shadow map
 		shader.use()
 		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), windowWidth/windowHeight, 0.1, 100.0)
 		shader.setMat4("projection", projection)
 		shader.setMat4("view", camera.getViewMatrix())
-		shader.setVec3("viewPos", camera.position)
 		// set light uniforms
-		gl.Uniform3fv(gl.GetUniformLocation(shader.id, gl.Str("lightPositions"+"\x00")), 4, &lightPositions[0][0])
-		gl.Uniform3fv(gl.GetUniformLocation(shader.id, gl.Str("lightColors"+"\x00")), 4, &lightColors[0][0])
 		shader.setVec3("viewPos", camera.position)
-		shader.setBool("gamma", gammaEnabled)
-		// floor
-		gl.BindVertexArray(planeVAO)
+		shader.setVec3("lightPos", lightPos)
+		shader.setMat4("lightSpaceMatrix", lightSpaceMatrix)
 		gl.ActiveTexture(gl.TEXTURE0)
-		if gammaEnabled {
-			gl.BindTexture(gl.TEXTURE_2D, floorTextureGammaCorrected)
+		gl.BindTexture(gl.TEXTURE_2D, woodTexture)
+		gl.ActiveTexture(gl.TEXTURE1)
+		gl.BindTexture(gl.TEXTURE_2D, depthMap)
+		renderScene(shader)
 
-		} else {
-			gl.BindTexture(gl.TEXTURE_2D, floorTexture)
-		}
-		gl.DrawArrays(gl.TRIANGLES, 0, 6)
+		// render Depth map to quad for visual debugging
+		debugDepthQuad.use()
+		debugDepthQuad.setFloat("near_plane", near_plane)
+		debugDepthQuad.setFloat("far_plane", far_plane)
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_2D, depthMap)
 
 		// Swap the color buffer and poll events
 		window.SwapBuffers()
@@ -430,4 +472,98 @@ func extract3x3From4x4(mat mgl32.Mat4) mgl32.Mat4 {
 		mat[8], mat[9], mat[10], 0, // Third column
 		0, 0, 0, // Fourth column
 	}
+}
+
+func renderScene(shader *Shader) {
+	// floor
+	shader.setMat4("model", mgl32.Ident4())
+	gl.BindVertexArray(planeVAO)
+	gl.DrawArrays(gl.TRIANGLES, 0, 6)
+	// cubes
+	model := mgl32.Ident4().Mul4(mgl32.Translate3D(0.0, 1.5, 0.0))
+	model = model.Mul4(mgl32.Scale3D(0.5, 0.5, 0.5))
+	shader.setMat4("model", model)
+	renderCube()
+	model = mgl32.Ident4().Mul4(mgl32.Translate3D(2.0, 0.0, 1.0))
+	model = model.Mul4(mgl32.Scale3D(0.5, 0.5, 0.5))
+	shader.setMat4("model", model)
+	renderCube()
+	model = mgl32.Ident4().Mul4(mgl32.Translate3D(-1.0, 0.0, 2.0))
+	model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(60.0), mgl32.Vec3{1.0, 0.0, 1.0}.Normalize()))
+	model = model.Mul4(mgl32.Scale3D(0.25, 0.25, 0.25))
+	shader.setMat4("model", model)
+	renderCube()
+
+}
+
+// renderCube() renders a 1x1 3D cube in NDC.
+var cubeVAO, cubeVBO uint32
+
+func renderCube() {
+	if cubeVAO == 0 {
+		// initialize
+		vertices := []float32{
+			// back face
+			-1.0, -1.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, // bottom-left
+			1.0, 1.0, -1.0, 0.0, 0.0, -1.0, 1.0, 1.0, // top-right
+			1.0, -1.0, -1.0, 0.0, 0.0, -1.0, 1.0, 0.0, // bottom-right
+			1.0, 1.0, -1.0, 0.0, 0.0, -1.0, 1.0, 1.0, // top-right
+			-1.0, -1.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, // bottom-left
+			-1.0, 1.0, -1.0, 0.0, 0.0, -1.0, 0.0, 1.0, // top-left
+			// front face
+			-1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, // bottom-left
+			1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, // bottom-right
+			1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, // top-right
+			1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, // top-right
+			-1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, // top-left
+			-1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, // bottom-left
+			// left face
+			-1.0, 1.0, 1.0, -1.0, 0.0, 0.0, 1.0, 0.0, // top-right
+			-1.0, 1.0, -1.0, -1.0, 0.0, 0.0, 1.0, 1.0, // top-left
+			-1.0, -1.0, -1.0, -1.0, 0.0, 0.0, 0.0, 1.0, // bottom-left
+			-1.0, -1.0, -1.0, -1.0, 0.0, 0.0, 0.0, 1.0, // bottom-left
+			-1.0, -1.0, 1.0, -1.0, 0.0, 0.0, 0.0, 0.0, // bottom-right
+			-1.0, 1.0, 1.0, -1.0, 0.0, 0.0, 1.0, 0.0, // top-right
+			// right face
+			1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, // top-left
+			1.0, -1.0, -1.0, 1.0, 0.0, 0.0, 0.0, 1.0, // bottom-right
+			1.0, 1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 1.0, // top-right
+			1.0, -1.0, -1.0, 1.0, 0.0, 0.0, 0.0, 1.0, // bottom-right
+			1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, // top-left
+			1.0, -1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, // bottom-left
+			// bottom face
+			-1.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 1.0, // top-right
+			1.0, -1.0, -1.0, 0.0, -1.0, 0.0, 1.0, 1.0, // top-left
+			1.0, -1.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, // bottom-left
+			1.0, -1.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, // bottom-left
+			-1.0, -1.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, // bottom-right
+			-1.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 1.0, // top-right
+			// top face
+			-1.0, 1.0, -1.0, 0.0, 1.0, 0.0, 0.0, 1.0, // top-left
+			1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, // bottom-right
+			1.0, 1.0, -1.0, 0.0, 1.0, 0.0, 1.0, 1.0, // top-right
+			1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, // bottom-right
+			-1.0, 1.0, -1.0, 0.0, 1.0, 0.0, 0.0, 1.0, // top-left
+			-1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, // bottom-left
+		}
+		gl.GenVertexArrays(1, &cubeVAO)
+		gl.GenBuffers(1, &cubeVBO)
+		// fill buffer
+		gl.BindBuffer(gl.ARRAY_BUFFER, cubeVBO)
+		gl.BufferData(gl.ARRAY_BUFFER, len(vertices)*int(unsafe.Sizeof(vertices[0])), gl.Ptr(vertices), gl.STATIC_DRAW)
+		// link vertex attributes
+		gl.BindVertexArray(cubeVAO)
+		gl.EnableVertexAttribArray(0)
+		gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 8*int32(unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+		gl.EnableVertexAttribArray(1)
+		gl.VertexAttribPointer(1, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
+		gl.EnableVertexAttribArray(2)
+		gl.VertexAttribPointer(2, 2, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(6*unsafe.Sizeof(float32(0))))
+		gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+		gl.BindVertexArray(0)
+	}
+	// render cube
+	gl.BindVertexArray(cubeVAO)
+	gl.DrawArrays(gl.TRIANGLES, 0, 36)
+	gl.BindVertexArray(0)
 }
