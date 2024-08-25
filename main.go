@@ -32,8 +32,8 @@ var (
 	// Handle when mouse first enters window and has large offset to center
 	firstMouse      = true
 	camera          *Camera
-	blinn           = false
-	blinnKeyPressed = false
+	gammaEnabled    = false
+	gammaKeyPressed = false
 
 	planeVertices = []float32{
 		// positions            // normals         // texcoords
@@ -129,12 +129,24 @@ func main() {
 	gl.VertexAttribPointer(2, 2, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(6*unsafe.Sizeof(float32(0))))
 	gl.BindVertexArray(0)
 
-	floorTexture := loadTextures("assets/wood.png")
+	floorTexture := loadTextures("assets/wood.png", false)
+	floorTextureGammaCorrected := loadTextures("assets/wood.png", true)
 
 	shader.use()
-	shader.setInt("texture1", 0)
+	shader.setInt("floorTexture", 0)
 
-	lightPos := mgl32.Vec3{}
+	lightPositions := []mgl32.Vec3{
+		{-3.0, 0.0, 0.0},
+		{-1.0, 0.0, 0.0},
+		{1.0, 0.0, 0.0},
+		{3.0, 0.0, 0.0},
+	}
+	lightColors := []mgl32.Vec3{
+		{0.25, 0.25, 0.25},
+		{0.50, 0.50, 0.50},
+		{0.75, 0.75, 0.75},
+		{1.0, 1.0, 1.0},
+	}
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -152,20 +164,24 @@ func main() {
 
 		// draw objects
 		shader.use()
-		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), windowWidth/windowHeight, 0.1, 1000.0)
+		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), windowWidth/windowHeight, 0.1, 100.0)
 		shader.setMat4("projection", projection)
 		shader.setMat4("view", camera.getViewMatrix())
 		shader.setVec3("viewPos", camera.position)
-		shader.setVec3("lightPos", lightPos)
-		if blinn {
-			shader.setInt("blinn", 1)
-		} else {
-			shader.setInt("blinn", 0)
-		}
+		// set light uniforms
+		gl.Uniform3fv(gl.GetUniformLocation(shader.id, gl.Str("lightPositions"+"\x00")), 4, &lightPositions[0][0])
+		gl.Uniform3fv(gl.GetUniformLocation(shader.id, gl.Str("lightColors"+"\x00")), 4, &lightColors[0][0])
+		shader.setVec3("viewPos", camera.position)
+		shader.setBool("gamma", gammaEnabled)
 		// floor
 		gl.BindVertexArray(planeVAO)
 		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, floorTexture)
+		if gammaEnabled {
+			gl.BindTexture(gl.TEXTURE_2D, floorTextureGammaCorrected)
+
+		} else {
+			gl.BindTexture(gl.TEXTURE_2D, floorTexture)
+		}
 		gl.DrawArrays(gl.TRIANGLES, 0, 6)
 
 		// Swap the color buffer and poll events
@@ -220,12 +236,12 @@ func processInput(w *glfw.Window) {
 	if w.GetKey(glfw.KeyD) == glfw.Press {
 		camera.processKeyboard(RIGHT, float32(deltaTime))
 	}
-	if w.GetKey(glfw.KeyB) == glfw.Press && !blinnKeyPressed {
-		blinn = !blinn
-		blinnKeyPressed = true
+	if w.GetKey(glfw.KeyG) == glfw.Press && !gammaKeyPressed {
+		gammaEnabled = !gammaEnabled
+		gammaKeyPressed = true
 	}
-	if w.GetKey(glfw.KeyB) == glfw.Release {
-		blinnKeyPressed = false
+	if w.GetKey(glfw.KeyG) == glfw.Release {
+		gammaKeyPressed = false
 	}
 
 	if w.GetKey(glfw.KeyLeftShift) == glfw.Press {
@@ -240,28 +256,38 @@ func processInput(w *glfw.Window) {
 		camera = NewDefaultCameraAtPosition(mgl32.Vec3{1.0, 0.5, 4.0})
 	}
 }
-func loadTextures(filePath string) uint32 {
-	// Generate and bind a new texture ID
-	var texture uint32
+func loadTextures(filePath string, gammaCorrection bool) (texture uint32) {
+	// Load the texture data
+	pixelData, format, width, height := loadPixels(filePath)
+
+	var internalFormat int32
+	switch format {
+	case gl.RED:
+		internalFormat = gl.RED
+	case gl.RGB:
+		if gammaCorrection {
+			internalFormat = gl.SRGB
+		} else {
+			internalFormat = gl.RGB
+		}
+	case gl.RGBA:
+		if gammaCorrection {
+			internalFormat = gl.SRGB_ALPHA
+		} else {
+			internalFormat = gl.RGBA
+		}
+	}
+
+	// Generate texture ID and bind it
 	gl.GenTextures(1, &texture)
 	gl.BindTexture(gl.TEXTURE_2D, texture)
 
-	pixelData, format, width, height := loadPixels(filePath)
-
-	// Upload texture data to the GPU
-	gl.TexImage2D(gl.TEXTURE_2D, 0, format, int32(width), int32(height), 0, uint32(format), gl.UNSIGNED_BYTE, gl.Ptr(pixelData))
-
-	// Generate mipmaps
+	// Specify texture parameters
+	gl.TexImage2D(gl.TEXTURE_2D, 0, internalFormat, int32(width), int32(height), 0, uint32(format), gl.UNSIGNED_BYTE, gl.Ptr(pixelData))
 	gl.GenerateMipmap(gl.TEXTURE_2D)
 
-	// Set texture wrapping/filtering options
-	// if format == gl.RGBA {
-	// 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	// 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	// } else {
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
-	// }
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 
