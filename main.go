@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
 	"log"
+	"math"
 	"os"
 	"runtime"
 	"unsafe"
@@ -20,7 +22,6 @@ const (
 	windowHeight  = 600
 	SHADOW_WIDTH  = 1024
 	SHADOW_HEIGHT = 1024
-	drawModel     = true
 )
 
 var (
@@ -32,23 +33,10 @@ var (
 	lastX = float64(windowWidth / 2)
 	lastY = float64(windowHeight / 2)
 	// Handle when mouse first enters window and has large offset to center
-	firstMouse      = true
-	camera          *Camera
-	gammaEnabled    = false
-	gammaKeyPressed = false
-
-	planeVAO uint32
-
-	planeVertices = []float32{
-		// positions            // normals         // texcoords
-		25.0, -0.5, 25.0, 0.0, 1.0, 0.0, 25.0, 0.0,
-		-25.0, -0.5, 25.0, 0.0, 1.0, 0.0, 0.0, 0.0,
-		-25.0, -0.5, -25.0, 0.0, 1.0, 0.0, 0.0, 25.0,
-
-		25.0, -0.5, 25.0, 0.0, 1.0, 0.0, 25.0, 0.0,
-		-25.0, -0.5, -25.0, 0.0, 1.0, 0.0, 0.0, 25.0,
-		25.0, -0.5, -25.0, 0.0, 1.0, 0.0, 25.0, 25.0,
-	}
+	firstMouse        = true
+	camera            *Camera
+	shadows           = false
+	shadowsKeyPressed = false
 )
 
 func init() {
@@ -107,6 +95,7 @@ func main() {
 	// Allow OpenGL to perform depth testing, where it uses the z-buffer to know when (not) to
 	// draw overlapping entities
 	gl.Enable(gl.DEPTH_TEST)
+	gl.Enable(gl.CULL_FACE)
 
 	/*
 	 * Build and compile our shader program
@@ -115,58 +104,38 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	simpleDepthShader, err := NewShader("shaders/depth.vs", "shaders/depth.fs", "")
+	simpleDepthShader, err := NewShader("shaders/depth.vs", "shaders/depth.fs", "shaders/depth.gs")
 	if err != nil {
 		log.Fatal(err)
 	}
-	debugDepthQuad, err := NewShader("shaders/quad.vs", "shaders/quad.fs", "")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// plane VAO
-	var planeVBO uint32
-	gl.GenVertexArrays(1, &planeVAO)
-	gl.GenBuffers(1, &planeVBO)
-	gl.BindVertexArray(planeVAO)
-	gl.BindBuffer(gl.ARRAY_BUFFER, planeVBO)
-	gl.BufferData(gl.ARRAY_BUFFER, len(planeVertices)*int(unsafe.Sizeof(planeVertices[0])), gl.Ptr(planeVertices), gl.STATIC_DRAW)
-	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
-	gl.EnableVertexAttribArray(1)
-	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
-	gl.EnableVertexAttribArray(2)
-	gl.VertexAttribPointer(2, 2, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(6*unsafe.Sizeof(float32(0))))
-	gl.BindVertexArray(0)
 
 	woodTexture := loadTextures("assets/wood.png", false)
 	var depthMapFBO uint32
 	gl.GenFramebuffers(1, &depthMapFBO)
-	// create depth texture
-	var depthMap uint32
-	gl.GenTextures(1, &depthMap)
-	gl.BindTexture(gl.TEXTURE_2D, depthMap)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, gl.DEPTH_COMPONENT, gl.FLOAT, gl.Ptr(nil))
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_BORDER)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_BORDER)
-	borderColor := []float32{1.0, 1.0, 1.0, 1.0}
-	gl.TexParameterfv(gl.TEXTURE_2D, gl.TEXTURE_BORDER_COLOR, &borderColor[0])
+	// create depth cubemap texture
+	var depthCubemap uint32
+	gl.GenTextures(1, &depthCubemap)
+	gl.BindTexture(gl.TEXTURE_CUBE_MAP, depthCubemap)
+	for i := 0; i < 6; i++ {
+		gl.TexImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X+uint32(i), 0, gl.DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, gl.DEPTH_COMPONENT, gl.FLOAT, gl.Ptr(nil))
+	}
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
 	// attach depth texture as FBO's depth buffer
 	gl.BindFramebuffer(gl.FRAMEBUFFER, depthMapFBO)
-	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthMap, 0)
+	gl.FramebufferTexture(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, depthCubemap, 0)
 	gl.DrawBuffer(gl.NONE)
 	gl.ReadBuffer(gl.NONE)
 	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 
 	shader.use()
 	shader.setInt("diffuseTexture", 0)
-	shader.setInt("shadowMap", 1)
-	debugDepthQuad.use()
-	debugDepthQuad.setInt("depthMap", 0)
+	shader.setInt("depthMap", 1)
 
-	lightPos := mgl32.Vec3{-2.0, 4.0, -1.0}
+	lightPos := mgl32.Vec3{0.0, 0.0, 0.0}
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -178,33 +147,41 @@ func main() {
 		// Handle user input.
 		processInput(window)
 
+		lightPos[2] = float32(math.Sin(float64(glfw.GetTime()*0.5)) * 3.0)
+
 		// render
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		// 1. render depth of scene to texture (from light's perspective)
+		// 0. create depth cubemap transformation matrices
 		near_plane := float32(1.0)
-		far_plane := float32(7.5)
-		lightProjection := mgl32.Ortho(-10.0, 10.0, -10.0, 10.0, near_plane, far_plane)
-		lightView := mgl32.LookAt(lightPos[0], lightPos[1], lightPos[2], 0.0, 0.0, 0.0, 0.0, 1.0, 0.0)
-		lightSpaceMatrix := lightProjection.Mul4(lightView)
-		// render scene from light's point of view
-		simpleDepthShader.use()
-		simpleDepthShader.setMat4("lightSpaceMatrix", lightSpaceMatrix)
+		far_plane := float32(25.0)
+		shadowProj := mgl32.Perspective(mgl32.DegToRad(90.0), SHADOW_WIDTH/SHADOW_HEIGHT, near_plane, far_plane)
+		shadowTransforms := make([]mgl32.Mat4, 6)
 
+		shadowTransforms[0] = shadowProj.Mul4(mgl32.LookAtV(lightPos, lightPos.Add(mgl32.Vec3{1.0, 0.0, 0.0}), mgl32.Vec3{0.0, -1.0, 0.0}))
+		shadowTransforms[1] = shadowProj.Mul4(mgl32.LookAtV(lightPos, lightPos.Add(mgl32.Vec3{-1.0, 0.0, 0.0}), mgl32.Vec3{0.0, -1.0, 0.0}))
+		shadowTransforms[2] = shadowProj.Mul4(mgl32.LookAtV(lightPos, lightPos.Add(mgl32.Vec3{0.0, 1.0, 0.0}), mgl32.Vec3{0.0, 0.0, 1.0}))
+		shadowTransforms[3] = shadowProj.Mul4(mgl32.LookAtV(lightPos, lightPos.Add(mgl32.Vec3{0.0, -1.0, 0.0}), mgl32.Vec3{0.0, 0.0, -1.0}))
+		shadowTransforms[4] = shadowProj.Mul4(mgl32.LookAtV(lightPos, lightPos.Add(mgl32.Vec3{0.0, 0.0, 1.0}), mgl32.Vec3{0.0, -1.0, 0.0}))
+		shadowTransforms[5] = shadowProj.Mul4(mgl32.LookAtV(lightPos, lightPos.Add(mgl32.Vec3{0.0, 0.0, -1.0}), mgl32.Vec3{0.0, -1.0, 0.0}))
+
+		// 1. render scene to depth cubemap
 		gl.Viewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT)
 		gl.BindFramebuffer(gl.FRAMEBUFFER, depthMapFBO)
 		gl.Clear(gl.DEPTH_BUFFER_BIT)
-		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, woodTexture)
+		simpleDepthShader.use()
+		for i := 0; i < 6; i++ {
+			simpleDepthShader.setMat4(fmt.Sprintf("shadowMatrices[%d]", i), shadowTransforms[i])
+		}
+		simpleDepthShader.setFloat("far_plane", far_plane)
+		simpleDepthShader.setVec3("lightPos", lightPos)
 		renderScene(simpleDepthShader)
 		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 
-		// reset viewport
+		// 2. render scene as normal
 		gl.Viewport(0, 0, windowWidth, windowHeight)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-
-		// 2. render scene as normal using the generated depth/shadow map
 		shader.use()
 		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), windowWidth/windowHeight, 0.1, 100.0)
 		shader.setMat4("projection", projection)
@@ -212,19 +189,13 @@ func main() {
 		// set light uniforms
 		shader.setVec3("viewPos", camera.position)
 		shader.setVec3("lightPos", lightPos)
-		shader.setMat4("lightSpaceMatrix", lightSpaceMatrix)
+		shader.setBool("shadows", shadows)
+		shader.setFloat("far_plane", far_plane)
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.BindTexture(gl.TEXTURE_2D, woodTexture)
 		gl.ActiveTexture(gl.TEXTURE1)
-		gl.BindTexture(gl.TEXTURE_2D, depthMap)
+		gl.BindTexture(gl.TEXTURE_CUBE_MAP, depthCubemap)
 		renderScene(shader)
-
-		// render Depth map to quad for visual debugging
-		debugDepthQuad.use()
-		debugDepthQuad.setFloat("near_plane", near_plane)
-		debugDepthQuad.setFloat("far_plane", far_plane)
-		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, depthMap)
 
 		// Swap the color buffer and poll events
 		window.SwapBuffers()
@@ -278,12 +249,12 @@ func processInput(w *glfw.Window) {
 	if w.GetKey(glfw.KeyD) == glfw.Press {
 		camera.processKeyboard(RIGHT, float32(deltaTime))
 	}
-	if w.GetKey(glfw.KeyG) == glfw.Press && !gammaKeyPressed {
-		gammaEnabled = !gammaEnabled
-		gammaKeyPressed = true
+	if w.GetKey(glfw.KeySpace) == glfw.Press && !shadowsKeyPressed {
+		shadows = !shadows
+		shadowsKeyPressed = true
 	}
-	if w.GetKey(glfw.KeyG) == glfw.Release {
-		gammaKeyPressed = false
+	if w.GetKey(glfw.KeySpace) == glfw.Release {
+		shadowsKeyPressed = false
 	}
 
 	if w.GetKey(glfw.KeyLeftShift) == glfw.Press {
@@ -294,7 +265,8 @@ func processInput(w *glfw.Window) {
 		// Tell glfw to show and stop capturing cursor
 		w.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
 	}
-	if w.GetKey(glfw.KeySpace) == glfw.Press {
+	if w.GetKey(glfw.KeyBackspace) == glfw.Press {
+		// reset view
 		camera = NewDefaultCameraAtPosition(mgl32.Vec3{1.0, 0.5, 4.0})
 	}
 }
@@ -334,25 +306,6 @@ func loadTextures(filePath string, gammaCorrection bool) (texture uint32) {
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 
 	return texture
-}
-
-func loadCubemap(faces []string) uint32 {
-	var textureID uint32
-	gl.GenTextures(1, &textureID)
-	gl.BindTexture(gl.TEXTURE_CUBE_MAP, textureID)
-
-	for i, face := range faces {
-		pixelData, format, width, height := loadPixels(face)
-		gl.TexImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X+uint32(i), 0, format, int32(width), int32(height), 0, uint32(format), gl.UNSIGNED_BYTE, gl.Ptr(pixelData))
-	}
-
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
-
-	return textureID
 }
 
 func loadPixels(filePath string) ([]byte, int32, int, int) {
@@ -465,32 +418,34 @@ func loadPixels(filePath string) ([]byte, int32, int, int) {
 	return pixelData, format, width, height
 }
 
-func extract3x3From4x4(mat mgl32.Mat4) mgl32.Mat4 {
-	return mgl32.Mat4{
-		mat[0], mat[1], mat[2], 0, // First column
-		mat[4], mat[5], mat[6], 0, // Second column
-		mat[8], mat[9], mat[10], 0, // Third column
-		0, 0, 0, // Fourth column
-	}
-}
-
 func renderScene(shader *Shader) {
-	// floor
-	shader.setMat4("model", mgl32.Ident4())
-	gl.BindVertexArray(planeVAO)
-	gl.DrawArrays(gl.TRIANGLES, 0, 6)
+	// room cube
+	shader.setMat4("model", mgl32.Ident4().Mul4(mgl32.Scale3D(5.0, 5.0, 5.0)))
+	gl.Disable(gl.CULL_FACE)
+	shader.setInt("reverse_normals", 1)
+	renderCube()
+	shader.setInt("reverse_normals", 0)
+	gl.Enable(gl.CULL_FACE)
 	// cubes
-	model := mgl32.Ident4().Mul4(mgl32.Translate3D(0.0, 1.5, 0.0))
+	model := mgl32.Ident4().Mul4(mgl32.Translate3D(4.0, -3.5, 0.0))
 	model = model.Mul4(mgl32.Scale3D(0.5, 0.5, 0.5))
 	shader.setMat4("model", model)
 	renderCube()
-	model = mgl32.Ident4().Mul4(mgl32.Translate3D(2.0, 0.0, 1.0))
+	model = mgl32.Ident4().Mul4(mgl32.Translate3D(2.0, 3.0, 1.0))
+	model = model.Mul4(mgl32.Scale3D(0.75, 0.75, 0.75))
+	shader.setMat4("model", model)
+	renderCube()
+	model = mgl32.Ident4().Mul4(mgl32.Translate3D(-3.0, -1.0, 0.0))
 	model = model.Mul4(mgl32.Scale3D(0.5, 0.5, 0.5))
 	shader.setMat4("model", model)
 	renderCube()
-	model = mgl32.Ident4().Mul4(mgl32.Translate3D(-1.0, 0.0, 2.0))
+	model = mgl32.Ident4().Mul4(mgl32.Translate3D(-1.5, 1.0, 1.5))
+	model = model.Mul4(mgl32.Scale3D(0.5, 0.5, 0.5))
+	shader.setMat4("model", model)
+	renderCube()
+	model = mgl32.Ident4().Mul4(mgl32.Translate3D(-1.5, 2.0, -3.0))
 	model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(60.0), mgl32.Vec3{1.0, 0.0, 1.0}.Normalize()))
-	model = model.Mul4(mgl32.Scale3D(0.25, 0.25, 0.25))
+	model = model.Mul4(mgl32.Scale3D(0.75, 0.75, 0.75))
 	shader.setMat4("model", model)
 	renderCube()
 
