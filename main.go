@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
@@ -31,16 +32,18 @@ var (
 	lastX = float64(windowWidth / 2)
 	lastY = float64(windowHeight / 2)
 	// Handle when mouse first enters window and has large offset to center
-	firstMouse  = true
-	camera      *Camera
-	heightScale = float32(0.1)
+	firstMouse    = true
+	camera        *Camera
+	hdr           = true
+	hdrKeyPressed = false
+	exposure      = float32(1.0)
 )
 
 func init() {
 	// This is needed to arrange that main() runs on main thread.
 	runtime.LockOSThread()
 
-	camera = NewDefaultCameraAtPosition(mgl32.Vec3{0.0, 0.0, 3.0})
+	camera = NewDefaultCameraAtPosition(mgl32.Vec3{0.0, 0.0, 5.0})
 }
 
 func main() {
@@ -100,17 +103,61 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	hdrShader, err := NewShader("shaders/hdr.vs", "shaders/hdr.fs", "")
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	diffuseMap := loadTextures("assets/bricks2.jpg", false)
-	normalMap := loadTextures("assets/bricks2_normal.jpg", false)
-	heightMap := loadTextures("assets/bricks2_disp.jpg", false)
+	woodTexture := loadTextures("assets/wood.png", true)
 
+	// configure floating point framebuffer
+	// ------------------------------------
+	var hdrFBO uint32
+	gl.GenFramebuffers(1, &hdrFBO)
+	// create floating point color buffer
+	var colorBuffer uint32
+	gl.GenTextures(1, &colorBuffer)
+	gl.BindTexture(gl.TEXTURE_2D, colorBuffer)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA16, windowWidth, windowHeight, 0, gl.RGBA, gl.FLOAT, gl.Ptr(nil))
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	// create depth buffer (renderbuffer)
+	var rboDepth uint32
+	gl.GenRenderbuffers(1, &rboDepth)
+	gl.BindRenderbuffer(gl.RENDERBUFFER, rboDepth)
+	gl.RenderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT, windowWidth, windowHeight)
+	// attach buffers
+	gl.BindFramebuffer(gl.FRAMEBUFFER, hdrFBO)
+	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colorBuffer, 0)
+	gl.FramebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, rboDepth)
+	if gl.CheckFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE {
+		log.Fatal("Framebuffer not complete!")
+	}
+	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+
+	// lighting info
+	// -------------
+	// positions
+	lightPositions := []mgl32.Vec3{
+		{0.0, 0.0, 49.5}, // back light
+		{-1.4, -1.9, 9.0},
+		{0.0, -1.8, 4.0},
+		{0.8, -1.7, 6.0},
+	}
+	// colors
+	lightColors := []mgl32.Vec3{
+		{200.0, 200.0, 200.0},
+		{0.1, 0.0, 0.0},
+		{0.0, 0.0, 0.2},
+		{0.0, 0.1, 0.0},
+	}
+
+	// shader configuration
+	// --------------------
 	shader.use()
-	shader.setInt("diffuseMap", 0)
-	shader.setInt("normalMap", 1)
-	shader.setInt("depthMap", 2)
-
-	lightPos := mgl32.Vec3{0.5, 1.0, 0.3}
+	shader.setInt("diffuseTexture", 0)
+	hdrShader.use()
+	hdrShader.setInt("hdrBuffer", 0)
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -126,28 +173,38 @@ func main() {
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
+		// 1. render scene into floating point framebuffer
+		// -----------------------------------------------
+		gl.BindFramebuffer(gl.FRAMEBUFFER, hdrFBO)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), windowWidth/windowHeight, 0.1, 100.0)
 		shader.use()
 		shader.setMat4("projection", projection)
 		shader.setMat4("view", camera.getViewMatrix())
-		// render parallax-mapped quad
-		model := mgl32.Ident4().Mul4(mgl32.HomogRotate3D(float32(glfw.GetTime()*0.1), mgl32.Vec3{1.0, 0.0, 1.0}.Normalize()))
-		shader.setVec3("viewPos", camera.position)
-		shader.setVec3("lightPos", lightPos)
-		shader.setMat4("model", model)
-		shader.setFloat("heightScale", heightScale)
 		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, diffuseMap)
-		gl.ActiveTexture(gl.TEXTURE1)
-		gl.BindTexture(gl.TEXTURE_2D, normalMap)
-		gl.ActiveTexture(gl.TEXTURE2)
-		gl.BindTexture(gl.TEXTURE_2D, heightMap)
-		renderQuad()
-
-		// render light source (simply re-renders a smaller plane at the light's position for debugging/visualization)
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(lightPos[0], lightPos[1], lightPos[2]))
-		model = model.Mul4(mgl32.Scale3D(0.1, 0.1, 0.1))
+		gl.BindTexture(gl.TEXTURE_2D, woodTexture)
+		// set lighting uniforms
+		for i, lightPosition := range lightPositions {
+			shader.setVec3(fmt.Sprintf("lights[%d].Position", i), lightPosition)
+			shader.setVec3(fmt.Sprintf("lights[%d].Color", i), lightColors[i])
+		}
+		shader.setVec3("viewPos", camera.position)
+		// render tunnel
+		model := mgl32.Ident4().Mul4(mgl32.Translate3D(0.0, 0.0, 25.0))
+		model = model.Mul4(mgl32.Scale3D(2.5, 2.5, 27.5))
 		shader.setMat4("model", model)
+		shader.setBool("inverse_normals", true)
+		renderCube()
+		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+
+		// 2. now render floating point color buffer to 2D quad and tonemap HDR colors to default framebuffer's (clamped) color range
+		// ---------------------
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+		hdrShader.use()
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_2D, colorBuffer)
+		hdrShader.setBool("hdr", hdr)
+		hdrShader.setFloat("exposure", exposure)
 		renderQuad()
 
 		// Swap the color buffer and poll events
@@ -216,18 +273,22 @@ func processInput(w *glfw.Window) {
 		camera = NewDefaultCameraAtPosition(mgl32.Vec3{1.0, 0.5, 4.0})
 	}
 
+	if w.GetKey(glfw.KeySpace) == glfw.Press && !hdrKeyPressed {
+		hdr = !hdr
+		hdrKeyPressed = true
+	}
+	if w.GetKey(glfw.KeySpace) == glfw.Release {
+		hdrKeyPressed = false
+	}
+
 	if w.GetKey(glfw.KeyQ) == glfw.Press {
-		if heightScale > 0.0 {
-			heightScale -= 0.0005
+		if exposure > 0.0 {
+			exposure -= 0.01
 		} else {
-			heightScale = 0.0
+			exposure = 0.0
 		}
 	} else if w.GetKey(glfw.KeyE) == glfw.Press {
-		if heightScale < 1.0 {
-			heightScale += 0.0005
-		} else {
-			heightScale = 1.0
-		}
+		exposure += 0.01
 	}
 }
 func loadTextures(filePath string, gammaCorrection bool) (texture uint32) {
@@ -488,63 +549,71 @@ var quadVAO, quadVBO uint32
 
 func renderQuad() {
 	if quadVAO == 0 {
-		// positions
-		pos1 := mgl32.Vec3{-1.0, 1.0, 0.0}
-		pos2 := mgl32.Vec3{-1.0, -1.0, 0.0}
-		pos3 := mgl32.Vec3{1.0, -1.0, 0.0}
-		pos4 := mgl32.Vec3{1.0, 1.0, 0.0}
-		// texture coordinates
-		uv1 := mgl32.Vec2{0.0, 1.0}
-		uv2 := mgl32.Vec2{0.0, 0.0}
-		uv3 := mgl32.Vec2{1.0, 0.0}
-		uv4 := mgl32.Vec2{1.0, 1.0}
-		// normal vector
-		nm := mgl32.Vec3{0.0, 0.0, 1.0}
+		// // positions
+		// pos1 := mgl32.Vec3{-1.0, 1.0, 0.0}
+		// pos2 := mgl32.Vec3{-1.0, -1.0, 0.0}
+		// pos3 := mgl32.Vec3{1.0, -1.0, 0.0}
+		// pos4 := mgl32.Vec3{1.0, 1.0, 0.0}
+		// // texture coordinates
+		// uv1 := mgl32.Vec2{0.0, 1.0}
+		// uv2 := mgl32.Vec2{0.0, 0.0}
+		// uv3 := mgl32.Vec2{1.0, 0.0}
+		// uv4 := mgl32.Vec2{1.0, 1.0}
+		// // normal vector
+		// nm := mgl32.Vec3{0.0, 0.0, 1.0}
 
-		// calculate tangent/bitangent vectors of both triangles
-		// triangle 1
-		edge1 := pos2.Sub(pos1)
-		edge2 := pos3.Sub(pos1)
-		deltaUV1 := uv2.Sub(uv1)
-		deltaUV2 := uv3.Sub(uv1)
+		// // calculate tangent/bitangent vectors of both triangles
+		// // triangle 1
+		// edge1 := pos2.Sub(pos1)
+		// edge2 := pos3.Sub(pos1)
+		// deltaUV1 := uv2.Sub(uv1)
+		// deltaUV2 := uv3.Sub(uv1)
 
-		f := 1.0 / (deltaUV1.X()*deltaUV2.Y() - deltaUV2.X()*deltaUV1.Y())
+		// f := 1.0 / (deltaUV1.X()*deltaUV2.Y() - deltaUV2.X()*deltaUV1.Y())
 
-		var tangent1 mgl32.Vec3
-		tangent1[0] = f * (deltaUV2.Y()*edge1.X() - deltaUV1.Y()*edge2.X())
-		tangent1[1] = f * (deltaUV2.Y()*edge1.Y() - deltaUV1.Y()*edge2.Y())
-		tangent1[2] = f * (deltaUV2.Y()*edge1.Z() - deltaUV1.Y()*edge2.Z())
-		var bitangent1 mgl32.Vec3
-		bitangent1[0] = f * (-deltaUV2.X()*edge1.X() + deltaUV1.X()*edge2.X())
-		bitangent1[1] = f * (-deltaUV2.X()*edge1.Y() + deltaUV1.X()*edge2.Y())
-		bitangent1[2] = f * (-deltaUV2.X()*edge1.Z() + deltaUV1.X()*edge2.Z())
+		// var tangent1 mgl32.Vec3
+		// tangent1[0] = f * (deltaUV2.Y()*edge1.X() - deltaUV1.Y()*edge2.X())
+		// tangent1[1] = f * (deltaUV2.Y()*edge1.Y() - deltaUV1.Y()*edge2.Y())
+		// tangent1[2] = f * (deltaUV2.Y()*edge1.Z() - deltaUV1.Y()*edge2.Z())
+		// var bitangent1 mgl32.Vec3
+		// bitangent1[0] = f * (-deltaUV2.X()*edge1.X() + deltaUV1.X()*edge2.X())
+		// bitangent1[1] = f * (-deltaUV2.X()*edge1.Y() + deltaUV1.X()*edge2.Y())
+		// bitangent1[2] = f * (-deltaUV2.X()*edge1.Z() + deltaUV1.X()*edge2.Z())
 
-		// triangle 2
-		edge1 = pos3.Sub(pos1)
-		edge2 = pos4.Sub(pos1)
-		deltaUV1 = uv3.Sub(uv1)
-		deltaUV2 = uv4.Sub(uv1)
+		// // triangle 2
+		// edge1 = pos3.Sub(pos1)
+		// edge2 = pos4.Sub(pos1)
+		// deltaUV1 = uv3.Sub(uv1)
+		// deltaUV2 = uv4.Sub(uv1)
 
-		f = 1.0 / (deltaUV1.X()*deltaUV2.Y() - deltaUV2.X()*deltaUV1.Y())
+		// f = 1.0 / (deltaUV1.X()*deltaUV2.Y() - deltaUV2.X()*deltaUV1.Y())
 
-		var tangent2 mgl32.Vec3
-		tangent2[0] = f * (deltaUV2.Y()*edge1.X() - deltaUV1.Y()*edge2.X())
-		tangent2[1] = f * (deltaUV2.Y()*edge1.Y() - deltaUV1.Y()*edge2.Y())
-		tangent2[2] = f * (deltaUV2.Y()*edge1.Z() - deltaUV1.Y()*edge2.Z())
-		var bitangent2 mgl32.Vec3
-		bitangent2[0] = f * (-deltaUV2.X()*edge1.X() + deltaUV1.X()*edge2.X())
-		bitangent2[1] = f * (-deltaUV2.X()*edge1.Y() + deltaUV1.X()*edge2.Y())
-		bitangent2[2] = f * (-deltaUV2.X()*edge1.Z() + deltaUV1.X()*edge2.Z())
+		// var tangent2 mgl32.Vec3
+		// tangent2[0] = f * (deltaUV2.Y()*edge1.X() - deltaUV1.Y()*edge2.X())
+		// tangent2[1] = f * (deltaUV2.Y()*edge1.Y() - deltaUV1.Y()*edge2.Y())
+		// tangent2[2] = f * (deltaUV2.Y()*edge1.Z() - deltaUV1.Y()*edge2.Z())
+		// var bitangent2 mgl32.Vec3
+		// bitangent2[0] = f * (-deltaUV2.X()*edge1.X() + deltaUV1.X()*edge2.X())
+		// bitangent2[1] = f * (-deltaUV2.X()*edge1.Y() + deltaUV1.X()*edge2.Y())
+		// bitangent2[2] = f * (-deltaUV2.X()*edge1.Z() + deltaUV1.X()*edge2.Z())
+
+		// quadVertices := []float32{
+		// 	// positions            // normal         // texcoords  // tangent                          // bitangent
+		// 	pos1.X(), pos1.Y(), pos1.Z(), nm.X(), nm.Y(), nm.Z(), uv1.X(), uv1.Y(), tangent1.X(), tangent1.Y(), tangent1.Z(), bitangent1.X(), bitangent1.Y(), bitangent1.Z(),
+		// 	pos2.X(), pos2.Y(), pos2.Z(), nm.X(), nm.Y(), nm.Z(), uv2.X(), uv2.Y(), tangent1.X(), tangent1.Y(), tangent1.Z(), bitangent1.X(), bitangent1.Y(), bitangent1.Z(),
+		// 	pos3.X(), pos3.Y(), pos3.Z(), nm.X(), nm.Y(), nm.Z(), uv3.X(), uv3.Y(), tangent1.X(), tangent1.Y(), tangent1.Z(), bitangent1.X(), bitangent1.Y(), bitangent1.Z(),
+
+		// 	pos1.X(), pos1.Y(), pos1.Z(), nm.X(), nm.Y(), nm.Z(), uv1.X(), uv1.Y(), tangent2.X(), tangent2.Y(), tangent2.Z(), bitangent2.X(), bitangent2.Y(), bitangent2.Z(),
+		// 	pos3.X(), pos3.Y(), pos3.Z(), nm.X(), nm.Y(), nm.Z(), uv3.X(), uv3.Y(), tangent2.X(), tangent2.Y(), tangent2.Z(), bitangent2.X(), bitangent2.Y(), bitangent2.Z(),
+		// 	pos4.X(), pos4.Y(), pos4.Z(), nm.X(), nm.Y(), nm.Z(), uv4.X(), uv4.Y(), tangent2.X(), tangent2.Y(), tangent2.Z(), bitangent2.X(), bitangent2.Y(), bitangent2.Z(),
+		// }
 
 		quadVertices := []float32{
-			// positions            // normal         // texcoords  // tangent                          // bitangent
-			pos1.X(), pos1.Y(), pos1.Z(), nm.X(), nm.Y(), nm.Z(), uv1.X(), uv1.Y(), tangent1.X(), tangent1.Y(), tangent1.Z(), bitangent1.X(), bitangent1.Y(), bitangent1.Z(),
-			pos2.X(), pos2.Y(), pos2.Z(), nm.X(), nm.Y(), nm.Z(), uv2.X(), uv2.Y(), tangent1.X(), tangent1.Y(), tangent1.Z(), bitangent1.X(), bitangent1.Y(), bitangent1.Z(),
-			pos3.X(), pos3.Y(), pos3.Z(), nm.X(), nm.Y(), nm.Z(), uv3.X(), uv3.Y(), tangent1.X(), tangent1.Y(), tangent1.Z(), bitangent1.X(), bitangent1.Y(), bitangent1.Z(),
-
-			pos1.X(), pos1.Y(), pos1.Z(), nm.X(), nm.Y(), nm.Z(), uv1.X(), uv1.Y(), tangent2.X(), tangent2.Y(), tangent2.Z(), bitangent2.X(), bitangent2.Y(), bitangent2.Z(),
-			pos3.X(), pos3.Y(), pos3.Z(), nm.X(), nm.Y(), nm.Z(), uv3.X(), uv3.Y(), tangent2.X(), tangent2.Y(), tangent2.Z(), bitangent2.X(), bitangent2.Y(), bitangent2.Z(),
-			pos4.X(), pos4.Y(), pos4.Z(), nm.X(), nm.Y(), nm.Z(), uv4.X(), uv4.Y(), tangent2.X(), tangent2.Y(), tangent2.Z(), bitangent2.X(), bitangent2.Y(), bitangent2.Z(),
+			// positions        // texture Coords
+			-1.0, 1.0, 0.0, 0.0, 1.0,
+			-1.0, -1.0, 0.0, 0.0, 0.0,
+			1.0, 1.0, 0.0, 1.0, 1.0,
+			1.0, -1.0, 0.0, 1.0, 0.0,
 		}
 
 		// configure plane VAO
@@ -554,18 +623,12 @@ func renderQuad() {
 		gl.BindBuffer(gl.ARRAY_BUFFER, quadVBO)
 		gl.BufferData(gl.ARRAY_BUFFER, len(quadVertices)*int(unsafe.Sizeof(quadVertices[0])), gl.Ptr(quadVertices), gl.STATIC_DRAW)
 		gl.EnableVertexAttribArray(0)
-		gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(14*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+		gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
 		gl.EnableVertexAttribArray(1)
-		gl.VertexAttribPointer(1, 3, gl.FLOAT, false, int32(14*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
-		gl.EnableVertexAttribArray(2)
-		gl.VertexAttribPointer(2, 2, gl.FLOAT, false, int32(14*unsafe.Sizeof(float32(0))), gl.Ptr(6*unsafe.Sizeof(float32(0))))
-		gl.EnableVertexAttribArray(3)
-		gl.VertexAttribPointer(3, 3, gl.FLOAT, false, int32(14*unsafe.Sizeof(float32(0))), gl.Ptr(8*unsafe.Sizeof(float32(0))))
-		gl.EnableVertexAttribArray(4)
-		gl.VertexAttribPointer(4, 3, gl.FLOAT, false, int32(14*unsafe.Sizeof(float32(0))), gl.Ptr(11*unsafe.Sizeof(float32(0))))
+		gl.VertexAttribPointer(1, 2, gl.FLOAT, false, int32(5*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
 	}
 	// render
 	gl.BindVertexArray(quadVAO)
-	gl.DrawArrays(gl.TRIANGLES, 0, 6)
+	gl.DrawArrays(gl.TRIANGLE_STRIP, 0, 4)
 	gl.BindVertexArray(0)
 }
