@@ -1,12 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
 	"log"
-	"math"
 	"os"
 	"runtime"
 	"unsafe"
@@ -33,10 +31,8 @@ var (
 	lastX = float64(windowWidth / 2)
 	lastY = float64(windowHeight / 2)
 	// Handle when mouse first enters window and has large offset to center
-	firstMouse        = true
-	camera            *Camera
-	shadows           = false
-	shadowsKeyPressed = false
+	firstMouse = true
+	camera     *Camera
 )
 
 func init() {
@@ -95,7 +91,6 @@ func main() {
 	// Allow OpenGL to perform depth testing, where it uses the z-buffer to know when (not) to
 	// draw overlapping entities
 	gl.Enable(gl.DEPTH_TEST)
-	gl.Enable(gl.CULL_FACE)
 
 	/*
 	 * Build and compile our shader program
@@ -104,38 +99,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	simpleDepthShader, err := NewShader("shaders/depth.vs", "shaders/depth.fs", "shaders/depth.gs")
-	if err != nil {
-		log.Fatal(err)
-	}
 
-	woodTexture := loadTextures("assets/wood.png", false)
-	var depthMapFBO uint32
-	gl.GenFramebuffers(1, &depthMapFBO)
-	// create depth cubemap texture
-	var depthCubemap uint32
-	gl.GenTextures(1, &depthCubemap)
-	gl.BindTexture(gl.TEXTURE_CUBE_MAP, depthCubemap)
-	for i := 0; i < 6; i++ {
-		gl.TexImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X+uint32(i), 0, gl.DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, gl.DEPTH_COMPONENT, gl.FLOAT, gl.Ptr(nil))
-	}
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
-	// attach depth texture as FBO's depth buffer
-	gl.BindFramebuffer(gl.FRAMEBUFFER, depthMapFBO)
-	gl.FramebufferTexture(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, depthCubemap, 0)
-	gl.DrawBuffer(gl.NONE)
-	gl.ReadBuffer(gl.NONE)
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+	diffuseMap := loadTextures("assets/brickwall.jpg", false)
+	normalMap := loadTextures("assets/brickwall_normal.jpg", false)
 
 	shader.use()
-	shader.setInt("diffuseTexture", 0)
-	shader.setInt("depthMap", 1)
+	shader.setInt("diffuseMap", 0)
+	shader.setInt("normalMap", 1)
 
-	lightPos := mgl32.Vec3{0.0, 0.0, 0.0}
+	lightPos := mgl32.Vec3{0.5, 1.0, 0.3}
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -147,55 +119,30 @@ func main() {
 		// Handle user input.
 		processInput(window)
 
-		lightPos[2] = float32(math.Sin(float64(glfw.GetTime()*0.5)) * 3.0)
-
 		// render
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		// 0. create depth cubemap transformation matrices
-		near_plane := float32(1.0)
-		far_plane := float32(25.0)
-		shadowProj := mgl32.Perspective(mgl32.DegToRad(90.0), SHADOW_WIDTH/SHADOW_HEIGHT, near_plane, far_plane)
-		shadowTransforms := make([]mgl32.Mat4, 6)
-
-		shadowTransforms[0] = shadowProj.Mul4(mgl32.LookAtV(lightPos, lightPos.Add(mgl32.Vec3{1.0, 0.0, 0.0}), mgl32.Vec3{0.0, -1.0, 0.0}))
-		shadowTransforms[1] = shadowProj.Mul4(mgl32.LookAtV(lightPos, lightPos.Add(mgl32.Vec3{-1.0, 0.0, 0.0}), mgl32.Vec3{0.0, -1.0, 0.0}))
-		shadowTransforms[2] = shadowProj.Mul4(mgl32.LookAtV(lightPos, lightPos.Add(mgl32.Vec3{0.0, 1.0, 0.0}), mgl32.Vec3{0.0, 0.0, 1.0}))
-		shadowTransforms[3] = shadowProj.Mul4(mgl32.LookAtV(lightPos, lightPos.Add(mgl32.Vec3{0.0, -1.0, 0.0}), mgl32.Vec3{0.0, 0.0, -1.0}))
-		shadowTransforms[4] = shadowProj.Mul4(mgl32.LookAtV(lightPos, lightPos.Add(mgl32.Vec3{0.0, 0.0, 1.0}), mgl32.Vec3{0.0, -1.0, 0.0}))
-		shadowTransforms[5] = shadowProj.Mul4(mgl32.LookAtV(lightPos, lightPos.Add(mgl32.Vec3{0.0, 0.0, -1.0}), mgl32.Vec3{0.0, -1.0, 0.0}))
-
-		// 1. render scene to depth cubemap
-		gl.Viewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT)
-		gl.BindFramebuffer(gl.FRAMEBUFFER, depthMapFBO)
-		gl.Clear(gl.DEPTH_BUFFER_BIT)
-		simpleDepthShader.use()
-		for i := 0; i < 6; i++ {
-			simpleDepthShader.setMat4(fmt.Sprintf("shadowMatrices[%d]", i), shadowTransforms[i])
-		}
-		simpleDepthShader.setFloat("far_plane", far_plane)
-		simpleDepthShader.setVec3("lightPos", lightPos)
-		renderScene(simpleDepthShader)
-		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
-
-		// 2. render scene as normal
-		gl.Viewport(0, 0, windowWidth, windowHeight)
-		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-		shader.use()
 		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), windowWidth/windowHeight, 0.1, 100.0)
+		shader.use()
 		shader.setMat4("projection", projection)
 		shader.setMat4("view", camera.getViewMatrix())
-		// set light uniforms
+		// render normal-mapped quad
+		model := mgl32.Ident4().Mul4(mgl32.HomogRotate3D(float32(glfw.GetTime()), mgl32.Vec3{1.0, 0.0, 1.0}.Normalize()))
 		shader.setVec3("viewPos", camera.position)
 		shader.setVec3("lightPos", lightPos)
-		shader.setBool("shadows", shadows)
-		shader.setFloat("far_plane", far_plane)
+		shader.setMat4("model", model)
 		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, woodTexture)
+		gl.BindTexture(gl.TEXTURE_2D, diffuseMap)
 		gl.ActiveTexture(gl.TEXTURE1)
-		gl.BindTexture(gl.TEXTURE_CUBE_MAP, depthCubemap)
-		renderScene(shader)
+		gl.BindTexture(gl.TEXTURE_2D, normalMap)
+		renderQuad()
+
+		// render light source (simply re-renders a smaller plane at the light's position for debugging/visualization)
+		model = mgl32.Ident4().Mul4(mgl32.Translate3D(lightPos[0], lightPos[1], lightPos[2]))
+		model = model.Mul4(mgl32.Scale3D(0.1, 0.1, 0.1))
+		shader.setMat4("model", model)
+		renderQuad()
 
 		// Swap the color buffer and poll events
 		window.SwapBuffers()
@@ -248,13 +195,6 @@ func processInput(w *glfw.Window) {
 	}
 	if w.GetKey(glfw.KeyD) == glfw.Press {
 		camera.processKeyboard(RIGHT, float32(deltaTime))
-	}
-	if w.GetKey(glfw.KeySpace) == glfw.Press && !shadowsKeyPressed {
-		shadows = !shadows
-		shadowsKeyPressed = true
-	}
-	if w.GetKey(glfw.KeySpace) == glfw.Release {
-		shadowsKeyPressed = false
 	}
 
 	if w.GetKey(glfw.KeyLeftShift) == glfw.Press {
@@ -520,5 +460,92 @@ func renderCube() {
 	// render cube
 	gl.BindVertexArray(cubeVAO)
 	gl.DrawArrays(gl.TRIANGLES, 0, 36)
+	gl.BindVertexArray(0)
+}
+
+// renders a 1x1 quad in NDC with manually calculated tangent vectors
+var quadVAO, quadVBO uint32
+
+func renderQuad() {
+	if quadVAO == 0 {
+		// positions
+		pos1 := mgl32.Vec3{-1.0, 1.0, 0.0}
+		pos2 := mgl32.Vec3{-1.0, -1.0, 0.0}
+		pos3 := mgl32.Vec3{1.0, -1.0, 0.0}
+		pos4 := mgl32.Vec3{1.0, 1.0, 0.0}
+		// texture coordinates
+		uv1 := mgl32.Vec2{0.0, 1.0}
+		uv2 := mgl32.Vec2{0.0, 0.0}
+		uv3 := mgl32.Vec2{1.0, 0.0}
+		uv4 := mgl32.Vec2{1.0, 1.0}
+		// normal vector
+		nm := mgl32.Vec3{0.0, 0.0, 1.0}
+
+		// calculate tangent/bitangent vectors of both triangles
+		// triangle 1
+		edge1 := pos2.Sub(pos1)
+		edge2 := pos3.Sub(pos1)
+		deltaUV1 := uv2.Sub(uv1)
+		deltaUV2 := uv3.Sub(uv1)
+
+		f := 1.0 / (deltaUV1.X()*deltaUV2.Y() - deltaUV2.X()*deltaUV1.Y())
+
+		var tangent1 mgl32.Vec3
+		tangent1[0] = f * (deltaUV2.Y()*edge1.X() - deltaUV1.Y()*edge2.X())
+		tangent1[1] = f * (deltaUV2.Y()*edge1.Y() - deltaUV1.Y()*edge2.Y())
+		tangent1[2] = f * (deltaUV2.Y()*edge1.Z() - deltaUV1.Y()*edge2.Z())
+		var bitangent1 mgl32.Vec3
+		bitangent1[0] = f * (-deltaUV2.X()*edge1.X() + deltaUV1.X()*edge2.X())
+		bitangent1[1] = f * (-deltaUV2.X()*edge1.Y() + deltaUV1.X()*edge2.Y())
+		bitangent1[2] = f * (-deltaUV2.X()*edge1.Z() + deltaUV1.X()*edge2.Z())
+
+		// triangle 2
+		edge1 = pos3.Sub(pos1)
+		edge2 = pos4.Sub(pos1)
+		deltaUV1 = uv3.Sub(uv1)
+		deltaUV2 = uv4.Sub(uv1)
+
+		f = 1.0 / (deltaUV1.X()*deltaUV2.Y() - deltaUV2.X()*deltaUV1.Y())
+
+		var tangent2 mgl32.Vec3
+		tangent2[0] = f * (deltaUV2.Y()*edge1.X() - deltaUV1.Y()*edge2.X())
+		tangent2[1] = f * (deltaUV2.Y()*edge1.Y() - deltaUV1.Y()*edge2.Y())
+		tangent2[2] = f * (deltaUV2.Y()*edge1.Z() - deltaUV1.Y()*edge2.Z())
+		var bitangent2 mgl32.Vec3
+		bitangent2[0] = f * (-deltaUV2.X()*edge1.X() + deltaUV1.X()*edge2.X())
+		bitangent2[1] = f * (-deltaUV2.X()*edge1.Y() + deltaUV1.X()*edge2.Y())
+		bitangent2[2] = f * (-deltaUV2.X()*edge1.Z() + deltaUV1.X()*edge2.Z())
+
+		quadVertices := []float32{
+			// positions            // normal         // texcoords  // tangent                          // bitangent
+			pos1.X(), pos1.Y(), pos1.Z(), nm.X(), nm.Y(), nm.Z(), uv1.X(), uv1.Y(), tangent1.X(), tangent1.Y(), tangent1.Z(), bitangent1.X(), bitangent1.Y(), bitangent1.Z(),
+			pos2.X(), pos2.Y(), pos2.Z(), nm.X(), nm.Y(), nm.Z(), uv2.X(), uv2.Y(), tangent1.X(), tangent1.Y(), tangent1.Z(), bitangent1.X(), bitangent1.Y(), bitangent1.Z(),
+			pos3.X(), pos3.Y(), pos3.Z(), nm.X(), nm.Y(), nm.Z(), uv3.X(), uv3.Y(), tangent1.X(), tangent1.Y(), tangent1.Z(), bitangent1.X(), bitangent1.Y(), bitangent1.Z(),
+
+			pos1.X(), pos1.Y(), pos1.Z(), nm.X(), nm.Y(), nm.Z(), uv1.X(), uv1.Y(), tangent2.X(), tangent2.Y(), tangent2.Z(), bitangent2.X(), bitangent2.Y(), bitangent2.Z(),
+			pos3.X(), pos3.Y(), pos3.Z(), nm.X(), nm.Y(), nm.Z(), uv3.X(), uv3.Y(), tangent2.X(), tangent2.Y(), tangent2.Z(), bitangent2.X(), bitangent2.Y(), bitangent2.Z(),
+			pos4.X(), pos4.Y(), pos4.Z(), nm.X(), nm.Y(), nm.Z(), uv4.X(), uv4.Y(), tangent2.X(), tangent2.Y(), tangent2.Z(), bitangent2.X(), bitangent2.Y(), bitangent2.Z(),
+		}
+
+		// configure plane VAO
+		gl.GenVertexArrays(1, &quadVAO)
+		gl.GenBuffers(1, &quadVBO)
+		gl.BindVertexArray(quadVAO)
+		gl.BindBuffer(gl.ARRAY_BUFFER, quadVBO)
+		gl.BufferData(gl.ARRAY_BUFFER, len(quadVertices)*int(unsafe.Sizeof(quadVertices[0])), gl.Ptr(quadVertices), gl.STATIC_DRAW)
+		gl.EnableVertexAttribArray(0)
+		gl.VertexAttribPointer(0, 3, gl.FLOAT, false, int32(14*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+		gl.EnableVertexAttribArray(1)
+		gl.VertexAttribPointer(1, 3, gl.FLOAT, false, int32(14*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
+		gl.EnableVertexAttribArray(2)
+		gl.VertexAttribPointer(2, 2, gl.FLOAT, false, int32(14*unsafe.Sizeof(float32(0))), gl.Ptr(6*unsafe.Sizeof(float32(0))))
+		gl.EnableVertexAttribArray(3)
+		gl.VertexAttribPointer(3, 3, gl.FLOAT, false, int32(14*unsafe.Sizeof(float32(0))), gl.Ptr(8*unsafe.Sizeof(float32(0))))
+		gl.EnableVertexAttribArray(4)
+		gl.VertexAttribPointer(4, 3, gl.FLOAT, false, int32(14*unsafe.Sizeof(float32(0))), gl.Ptr(11*unsafe.Sizeof(float32(0))))
+	}
+	// render
+	gl.BindVertexArray(quadVAO)
+	gl.DrawArrays(gl.TRIANGLES, 0, 6)
 	gl.BindVertexArray(0)
 }
