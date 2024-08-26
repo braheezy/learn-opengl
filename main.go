@@ -31,8 +31,9 @@ var (
 	lastX = float64(windowWidth / 2)
 	lastY = float64(windowHeight / 2)
 	// Handle when mouse first enters window and has large offset to center
-	firstMouse = true
-	camera     *Camera
+	firstMouse  = true
+	camera      *Camera
+	heightScale = float32(0.1)
 )
 
 func init() {
@@ -100,12 +101,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	diffuseMap := loadTextures("assets/brickwall.jpg", false)
-	normalMap := loadTextures("assets/brickwall_normal.jpg", false)
+	diffuseMap := loadTextures("assets/bricks2.jpg", false)
+	normalMap := loadTextures("assets/bricks2_normal.jpg", false)
+	heightMap := loadTextures("assets/bricks2_disp.jpg", false)
 
 	shader.use()
 	shader.setInt("diffuseMap", 0)
 	shader.setInt("normalMap", 1)
+	shader.setInt("depthMap", 2)
 
 	lightPos := mgl32.Vec3{0.5, 1.0, 0.3}
 
@@ -127,15 +130,18 @@ func main() {
 		shader.use()
 		shader.setMat4("projection", projection)
 		shader.setMat4("view", camera.getViewMatrix())
-		// render normal-mapped quad
-		model := mgl32.Ident4().Mul4(mgl32.HomogRotate3D(float32(glfw.GetTime()), mgl32.Vec3{1.0, 0.0, 1.0}.Normalize()))
+		// render parallax-mapped quad
+		model := mgl32.Ident4().Mul4(mgl32.HomogRotate3D(float32(glfw.GetTime()*0.1), mgl32.Vec3{1.0, 0.0, 1.0}.Normalize()))
 		shader.setVec3("viewPos", camera.position)
 		shader.setVec3("lightPos", lightPos)
 		shader.setMat4("model", model)
+		shader.setFloat("heightScale", heightScale)
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.BindTexture(gl.TEXTURE_2D, diffuseMap)
 		gl.ActiveTexture(gl.TEXTURE1)
 		gl.BindTexture(gl.TEXTURE_2D, normalMap)
+		gl.ActiveTexture(gl.TEXTURE2)
+		gl.BindTexture(gl.TEXTURE_2D, heightMap)
 		renderQuad()
 
 		// render light source (simply re-renders a smaller plane at the light's position for debugging/visualization)
@@ -208,6 +214,20 @@ func processInput(w *glfw.Window) {
 	if w.GetKey(glfw.KeyBackspace) == glfw.Press {
 		// reset view
 		camera = NewDefaultCameraAtPosition(mgl32.Vec3{1.0, 0.5, 4.0})
+	}
+
+	if w.GetKey(glfw.KeyQ) == glfw.Press {
+		if heightScale > 0.0 {
+			heightScale -= 0.0005
+		} else {
+			heightScale = 0.0
+		}
+	} else if w.GetKey(glfw.KeyE) == glfw.Press {
+		if heightScale < 1.0 {
+			heightScale += 0.0005
+		} else {
+			heightScale = 1.0
+		}
 	}
 }
 func loadTextures(filePath string, gammaCorrection bool) (texture uint32) {
