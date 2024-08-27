@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"unsafe"
 
+	"math/rand"
+
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
 	"github.com/go-gl/mathgl/mgl32"
@@ -81,7 +83,7 @@ func main() {
 	// Listen to mouse events
 	window.SetCursorPosCallback(mouseCallback)
 	// Tell glfw to capture and hide the cursor
-	window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+	// window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
 	// Listen to scroll events
 	window.SetScrollCallback(scrollCallback)
 
@@ -97,106 +99,100 @@ func main() {
 	gl.Enable(gl.DEPTH_TEST)
 
 	/*
-	 * Build and compile our shader program
+	 * Build and compile our shaderGeometryPass program
 	 */
-	shader, err := NewShader("shaders/shader.vs", "shaders/shader.fs", "")
+	shaderGeometryPass, err := NewShader("shaders/shader.vs", "shaders/shader.fs", "")
 	if err != nil {
 		log.Fatal(err)
 	}
-	shaderLight, err := NewShader("shaders/shader.vs", "shaders/light_box.fs", "")
+	shaderLightingPass, err := NewShader("shaders/defer.vs", "shaders/defer.fs", "")
 	if err != nil {
 		log.Fatal(err)
 	}
-	shaderBlur, err := NewShader("shaders/blur.vs", "shaders/blur.fs", "")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	shaderBloom, err := NewShader("shaders/bloom.vs", "shaders/bloom.fs", "")
+	shaderLightBox, err := NewShader("shaders/light_box.vs", "shaders/light_box.fs", "")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	woodTexture := loadTextures("assets/wood.png", true)
-	containerTexture := loadTextures("assets/container2.png", true)
-
-	// configure floating point framebuffer
-	// ------------------------------------
-	var hdrFBO uint32
-	gl.GenFramebuffers(1, &hdrFBO)
-	gl.BindFramebuffer(gl.FRAMEBUFFER, hdrFBO)
-	// create floating point color buffer
-	colorBuffers := make([]uint32, 2)
-	gl.GenTextures(2, &colorBuffers[0])
-	for i := 0; i < 2; i++ {
-		gl.BindTexture(gl.TEXTURE_2D, colorBuffers[i])
-		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA16, windowWidth, windowHeight, 0, gl.RGBA, gl.FLOAT, gl.Ptr(nil))
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-		gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0+uint32(i), gl.TEXTURE_2D, colorBuffers[i], 0)
+	backpack := LoadModel("assets/backpack")
+	objectPositions := []mgl32.Vec3{
+		{-3.0, -0.5, -3.0},
+		{0.0, -0.5, -3.0},
+		{3.0, -0.5, -3.0},
+		{-3.0, -0.5, 0.0},
+		{0.0, -0.5, 0.0},
+		{3.0, -0.5, 0.0},
+		{-3.0, -0.5, 3.0},
+		{0.0, -0.5, 3.0},
+		{3.0, -0.5, 3.0},
 	}
-	// create depth buffer (renderbuffer)
+
+	// configure g-buffer framebuffer
+	// ------------------------------
+	var gBuffer uint32
+	gl.GenFramebuffers(1, &gBuffer)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, gBuffer)
+	var gPosition, gNormal, gAlbedoSpec uint32
+	// position color buffer
+	gl.GenTextures(1, &gPosition)
+	gl.BindTexture(gl.TEXTURE_2D, gPosition)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, windowWidth, windowHeight, 0, gl.RGBA, gl.FLOAT, gl.Ptr(nil))
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, gPosition, 0)
+	// normal color buffer
+	gl.GenTextures(1, &gNormal)
+	gl.BindTexture(gl.TEXTURE_2D, gNormal)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, windowWidth, windowHeight, 0, gl.RGBA, gl.FLOAT, gl.Ptr(nil))
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, gNormal, 0)
+	// color + specular color buffer
+	gl.GenTextures(1, &gAlbedoSpec)
+	gl.BindTexture(gl.TEXTURE_2D, gAlbedoSpec)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, windowWidth, windowHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(nil))
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT2, gl.TEXTURE_2D, gAlbedoSpec, 0)
+	// tell OpenGL which color attachments we'll use (of this framebuffer) for rendering
+	attachments := []uint32{gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2}
+	gl.DrawBuffers(3, &attachments[0])
+	// create and attach depth buffer (renderbuffer)
 	var rboDepth uint32
 	gl.GenRenderbuffers(1, &rboDepth)
 	gl.BindRenderbuffer(gl.RENDERBUFFER, rboDepth)
 	gl.RenderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT, windowWidth, windowHeight)
 	gl.FramebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, rboDepth)
-	// tell OpenGL which color attachments we'll use (of this framebuffer) for rendering
-	attachments := []uint32{gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1}
-	gl.DrawBuffers(2, &attachments[0])
-	// attach buffers
+	// finally check if framebuffer is complete
 	if gl.CheckFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE {
 		log.Fatal("Framebuffer not complete!")
 	}
 	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 
-	// ping-pong-framebuffer for blurring
-	pingpongFBO := make([]uint32, 2)
-	pingpongColorbuffers := make([]uint32, 2)
-	gl.GenFramebuffers(2, &pingpongFBO[0])
-	gl.GenTextures(2, &pingpongColorbuffers[0])
-	for i := 0; i < 2; i++ {
-		gl.BindFramebuffer(gl.FRAMEBUFFER, pingpongFBO[i])
-		gl.BindTexture(gl.TEXTURE_2D, pingpongColorbuffers[i])
-		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA16, windowWidth, windowHeight, 0, gl.RGBA, gl.FLOAT, gl.Ptr(nil))
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE) // we clamp to the edge as the blur filter would otherwise sample repeated texture values!
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-		gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, pingpongColorbuffers[i], 0)
-		// also check if framebuffers are complete (no need for depth buffer)
-		if gl.CheckFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE {
-			log.Fatal("pingpong framebuffer not complete!")
-		}
-	}
 	// lighting info
 	// -------------
-	// positions
-	lightPositions := []mgl32.Vec3{
-		{0.0, 0.0, 1.5},
-		{-4.0, 0.5, -3.0},
-		{3.0, 0.5, 1.0},
-		{-0.8, 2.4, -1.0},
-	}
-	// colors
-	lightColors := []mgl32.Vec3{
-		{5.0, 5.0, 5.0},
-		{10.0, 0.0, 0.0},
-		{0.0, 0.0, 15.0},
-		{0.0, 5.0, 0.0},
+	NR_LIGHTS := 128
+	var lightPositions []mgl32.Vec3
+	var lightColors []mgl32.Vec3
+	for i := 0; i < NR_LIGHTS; i++ {
+		// calculate slightly random offsets
+		xPos := ((float32(rand.Int()%100)/100.0)*6.0 - 3.0)
+		yPos := ((float32(rand.Int()%100)/100.0)*6.0 - 4.0)
+		zPos := ((float32(rand.Int()%100)/100.0)*6.0 - 3.0)
+		lightPositions = append(lightPositions, mgl32.Vec3{float32(xPos), float32(yPos), float32(zPos)})
+		// also calculate random color
+		rColor := ((float32(rand.Int()%100) / 200.0) + 0.5) // between 0.5 and 1.0
+		gColor := ((float32(rand.Int()%100) / 200.0) + 0.5) // between 0.5 and 1.0
+		bColor := ((float32(rand.Int()%100) / 200.0) + 0.5) // between 0.5 and 1.0
+		lightColors = append(lightColors, mgl32.Vec3{rColor, gColor, bColor})
 	}
 
 	// shader configuration
 	// --------------------
-	shader.use()
-	shader.setInt("diffuseTexture", 0)
-	shaderBlur.use()
-	shaderBlur.setInt("image", 0)
-	shaderBloom.use()
-	shaderBloom.setInt("scene", 0)
-	shaderBloom.setInt("bloomBlur", 1)
+	shaderLightingPass.use()
+	shaderLightingPass.setInt("gPosition", 0)
+	shaderLightingPass.setInt("gNormal", 1)
+	shaderLightingPass.setInt("gAlbedoSpec", 2)
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -212,127 +208,69 @@ func main() {
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		// 1. render scene into floating point framebuffer
-		// -----------------------------------------------
-		gl.BindFramebuffer(gl.FRAMEBUFFER, hdrFBO)
+		// 1. geometry pass: render scene's geometry/color data into gbuffer
+		// -----------------------------------------------------------------
+		gl.BindFramebuffer(gl.FRAMEBUFFER, gBuffer)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), windowWidth/windowHeight, 0.1, 100.0)
 		view := camera.getViewMatrix()
-		shader.use()
-		shader.setMat4("projection", projection)
-		shader.setMat4("view", view)
-		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, woodTexture)
-		// set lighting uniforms
-		for i, lightPosition := range lightPositions {
-			shader.setVec3(fmt.Sprintf("lights[%d].Position", i), lightPosition)
-			shader.setVec3(fmt.Sprintf("lights[%d].Color", i), lightColors[i])
-		}
-		shader.setVec3("viewPos", camera.position)
-		// create one large cube that acts as the floor
-		model := mgl32.Ident4().Mul4(mgl32.Translate3D(0.0, -1.0, 0.0))
-		model = model.Mul4(mgl32.Scale3D(12.5, 0.5, 12.5))
-		shader.setMat4("model", model)
-		renderCube()
-		// then create multiple cubes as the scenery
-		gl.BindTexture(gl.TEXTURE_2D, containerTexture)
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(0.0, 1.5, 0.0))
-		model = model.Mul4(mgl32.Scale3D(0.5, 0.5, 0.5))
-		shader.setMat4("model", model)
-		renderCube()
-
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(2.0, 0.0, 1.0))
-		model = model.Mul4(mgl32.Scale3D(0.5, 0.5, 0.5))
-		shader.setMat4("model", model)
-		renderCube()
-
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(-1.0, -1.0, 2.0))
-		model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(60.0), mgl32.Vec3{1.0, 0.0, 1.0}.Normalize()))
-		shader.setMat4("model", model)
-		renderCube()
-
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(0.0, 2.7, 4.0))
-		model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(23.0), mgl32.Vec3{1.0, 0.0, 1.0}.Normalize()))
-		model = model.Mul4(mgl32.Scale3D(1.25, 1.25, 1.25))
-		shader.setMat4("model", model)
-		renderCube()
-
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(-2.0, 1.0, -3.0))
-		model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(124.0), mgl32.Vec3{1.0, 0.0, 1.0}.Normalize()))
-		shader.setMat4("model", model)
-		renderCube()
-
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(-3.0, 0.0, 0.0))
-		model = model.Mul4(mgl32.Scale3D(0.5, 0.5, 0.5))
-		shader.setMat4("model", model)
-		renderCube()
-
-		// finally show all the light sources as bright cubes
-		shaderLight.use()
-		shaderLight.setMat4("projection", projection)
-		shaderLight.setMat4("view", view)
-
-		for i := 0; i < len(lightPositions); i++ {
-			model = mgl32.Ident4().Mul4(mgl32.Translate3D(lightPositions[i].X(), lightPositions[i].Y(), lightPositions[i].Z()))
-			model = model.Mul4(mgl32.Scale3D(0.25, 0.25, 0.25))
-			shaderLight.setMat4("model", model)
-			shaderLight.setVec3("lightColor", lightColors[i])
-			renderCube()
+		shaderGeometryPass.use()
+		shaderGeometryPass.setMat4("projection", projection)
+		shaderGeometryPass.setMat4("view", view)
+		for i := 0; i < len(objectPositions); i++ {
+			model := mgl32.Ident4().Mul4(mgl32.Translate3D(objectPositions[i].X(), objectPositions[i].Y(), objectPositions[i].Z()))
+			model = model.Mul4(mgl32.Scale3D(0.5, 0.5, 0.5))
+			shaderGeometryPass.setMat4("model", model)
+			backpack.Draw(*shaderGeometryPass)
 		}
 		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 
-		// 2. blur bright fragments with two-pass Gaussian Blur
-		// --------------------------------------------------
-		horizontal := true
-		first_iteration := true
-		amount := 10
-		shaderBlur.use()
-		for i := 0; i < amount; i++ {
-			if horizontal {
-				gl.BindFramebuffer(gl.FRAMEBUFFER, pingpongFBO[1])
-			} else {
-				gl.BindFramebuffer(gl.FRAMEBUFFER, pingpongFBO[0])
-			}
-			shaderBlur.setBool("horizontal", horizontal)
-			if first_iteration {
-				gl.BindTexture(gl.TEXTURE_2D, colorBuffers[1])
-			} else {
-				if horizontal {
-					gl.BindTexture(gl.TEXTURE_2D, pingpongColorbuffers[0])
-				} else {
-					gl.BindTexture(gl.TEXTURE_2D, pingpongColorbuffers[1])
-				}
-			}
-			renderQuad()
-			horizontal = !horizontal
-			if first_iteration {
-				first_iteration = false
-			}
-		}
-		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
-
-		// 3. now render floating point color buffer to 2D quad and tonemap HDR colors to default framebuffer's (clamped) color range
-		// --------------------------------------------------------------------------------------------------------------------------
+		// 2. lighting pass: calculate lighting by iterating over a screen filled quad pixel-by-pixel using the gbuffer's content.
+		// -----------------------------------------------------------------------------------------------------------------------
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-		shaderBloom.use()
+		shaderLightingPass.use()
 		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, colorBuffers[0])
+		gl.BindTexture(gl.TEXTURE_2D, gPosition)
 		gl.ActiveTexture(gl.TEXTURE1)
-		if horizontal {
-			gl.BindTexture(gl.TEXTURE_2D, pingpongColorbuffers[0])
-		} else {
-			gl.BindTexture(gl.TEXTURE_2D, pingpongColorbuffers[1])
+		gl.BindTexture(gl.TEXTURE_2D, gNormal)
+		gl.ActiveTexture(gl.TEXTURE2)
+		gl.BindTexture(gl.TEXTURE_2D, gAlbedoSpec)
+		// send light relevant uniforms
+		for i := 0; i < len(lightPositions); i++ {
+			shaderLightingPass.setVec3(fmt.Sprintf("lights[%v].Position", i), lightPositions[i])
+			shaderLightingPass.setVec3(fmt.Sprintf("lights[%v].Color", i), lightColors[i])
+			// update attenuation parameters and calculate radius
+			linear := float32(0.7)
+			quadratic := float32(1.8)
+			shaderLightingPass.setFloat(fmt.Sprintf("lights[%v].Linear", i), linear)
+			shaderLightingPass.setFloat(fmt.Sprintf("lights[%v].Quadratic", i), quadratic)
 		}
-		shaderBloom.setBool("bloom", bloom)
-		shaderBloom.setFloat("exposure", exposure)
+		shaderLightingPass.setVec3("viewPos", camera.position)
+		// finally render quad
 		renderQuad()
 
-		bloomText := "off"
-		if bloom {
-			bloomText = "on"
-		}
-		fmt.Printf("\rbloom: %v | exposure: %v", bloomText, exposure)
+		// 2.5. copy content of geometry's depth buffer to default framebuffer's depth buffer
+		// ----------------------------------------------------------------------------------
+		gl.BindFramebuffer(gl.READ_FRAMEBUFFER, gBuffer)
+		gl.BindFramebuffer(gl.DRAW_FRAMEBUFFER, 0) // write to default framebuffer
+		// blit to default framebuffer. Note that this may or may not work as the internal formats of both the FBO and default framebuffer have to match.
+		// the internal formats are implementation defined. This works on all of my systems, but if it doesn't on yours you'll likely have to write to the
+		// depth buffer in another shader stage (or somehow see to match the default framebuffer's internal format with the FBO's internal format).
+		gl.BlitFramebuffer(0, 0, windowWidth, windowHeight, 0, 0, windowWidth, windowHeight, gl.DEPTH_BUFFER_BIT, gl.NEAREST)
+		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 
+		// 3. render lights on top of scene
+		// --------------------------------
+		shaderLightBox.use()
+		shaderLightBox.setMat4("projection", projection)
+		shaderLightBox.setMat4("view", view)
+		for i := 0; i < len(lightPositions); i++ {
+			model := mgl32.Ident4().Mul4(mgl32.Translate3D(lightPositions[i].X(), lightPositions[i].Y(), lightPositions[i].Z()))
+			model = model.Mul4(mgl32.Scale3D(0.125, 0.125, 0.125))
+			shaderLightBox.setMat4("model", model)
+			shaderLightBox.setVec3("lightColor", lightColors[i])
+			renderCube()
+		}
 		// Swap the color buffer and poll events
 		window.SwapBuffers()
 		glfw.PollEvents()
