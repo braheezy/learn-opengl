@@ -6,11 +6,10 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"log"
+	"math"
 	"os"
 	"runtime"
 	"unsafe"
-
-	"math/rand"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -19,10 +18,8 @@ import (
 
 // Settings
 const (
-	windowWidth   = 800
-	windowHeight  = 600
-	SHADOW_WIDTH  = 1024
-	SHADOW_HEIGHT = 1024
+	windowWidth  = 1280
+	windowHeight = 720
 )
 
 var (
@@ -99,159 +96,41 @@ func main() {
 	gl.Enable(gl.DEPTH_TEST)
 
 	/*
-	 * Build and compile our shaderGeometryPass program
+	 * Build and compile our shader program
 	 */
-	shaderGeometryPass, err := NewShader("shaders/shader.vs", "shaders/shader.fs", "")
+	shader, err := NewShader("shaders/shader.vs", "shaders/shader.fs", "")
 	if err != nil {
 		log.Fatal(err)
 	}
-	shaderLightingPass, err := NewShader("shaders/ssao.vs", "shaders/ssao_lighting.fs", "")
-	if err != nil {
-		log.Fatal(err)
-	}
-	shaderSSAO, err := NewShader("shaders/ssao.vs", "shaders/ssao.fs", "")
-	if err != nil {
-		log.Fatal(err)
-	}
-	shaderSSAOBlur, err := NewShader("shaders/ssao.vs", "shaders/ssao_blur.fs", "")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	backpack := LoadModel("assets/backpack")
-
-	// configure g-buffer framebuffer
-	// ------------------------------
-	var gBuffer uint32
-	gl.GenFramebuffers(1, &gBuffer)
-	gl.BindFramebuffer(gl.FRAMEBUFFER, gBuffer)
-	var gPosition, gNormal, gAlbedo uint32
-	// position color buffer
-	gl.GenTextures(1, &gPosition)
-	gl.BindTexture(gl.TEXTURE_2D, gPosition)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, windowWidth, windowHeight, 0, gl.RGBA, gl.FLOAT, gl.Ptr(nil))
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, gPosition, 0)
-	// normal color buffer
-	gl.GenTextures(1, &gNormal)
-	gl.BindTexture(gl.TEXTURE_2D, gNormal)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, windowWidth, windowHeight, 0, gl.RGBA, gl.FLOAT, gl.Ptr(nil))
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, gNormal, 0)
-	// color + specular color buffer
-	gl.GenTextures(1, &gAlbedo)
-	gl.BindTexture(gl.TEXTURE_2D, gAlbedo)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, windowWidth, windowHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(nil))
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT2, gl.TEXTURE_2D, gAlbedo, 0)
-	// tell OpenGL which color attachments we'll use (of this framebuffer) for rendering
-	attachments := []uint32{gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2}
-	gl.DrawBuffers(3, &attachments[0])
-	// create and attach depth buffer (renderbuffer)
-	var rboDepth uint32
-	gl.GenRenderbuffers(1, &rboDepth)
-	gl.BindRenderbuffer(gl.RENDERBUFFER, rboDepth)
-	gl.RenderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT, windowWidth, windowHeight)
-	gl.FramebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, rboDepth)
-	// finally check if framebuffer is complete
-	if gl.CheckFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE {
-		log.Fatal("Framebuffer not complete!")
-	}
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
-
-	// also create framebuffer to hold SSAO processing stage
-	// -----------------------------------------------------
-	var ssaoFBO, ssaoBlurFBO uint32
-	gl.GenFramebuffers(1, &ssaoFBO)
-	gl.GenFramebuffers(1, &ssaoBlurFBO)
-	gl.BindFramebuffer(gl.FRAMEBUFFER, ssaoFBO)
-	var ssaoColorBuffer, ssaoColorBufferBlur uint32
-	// SSAO color buffer
-	gl.GenTextures(1, &ssaoColorBuffer)
-	gl.BindTexture(gl.TEXTURE_2D, ssaoColorBuffer)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RED, windowWidth, windowHeight, 0, gl.RED, gl.FLOAT, gl.Ptr(nil))
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, ssaoColorBuffer, 0)
-	if gl.CheckFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE {
-		log.Fatal("SSAO Framebuffer not complete!")
-	}
-	// and blur stage
-	gl.BindFramebuffer(gl.FRAMEBUFFER, ssaoBlurFBO)
-	gl.GenTextures(1, &ssaoColorBufferBlur)
-	gl.BindTexture(gl.TEXTURE_2D, ssaoColorBufferBlur)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RED, windowWidth, windowHeight, 0, gl.RED, gl.FLOAT, gl.Ptr(nil))
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, ssaoColorBufferBlur, 0)
-	if gl.CheckFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE {
-		log.Fatal("SSAO Blur Framebuffer not complete!")
-	}
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
-
-	// generate sample kernel
-	// ----------------------
-	ssaoKernel := make([]mgl32.Vec3, 64)
-	for i := 0; i < 64; i++ {
-		x := rand.Float32()*2.0 - 1.0
-		y := rand.Float32()*2.0 - 1.0
-		z := rand.Float32()
-		sample := mgl32.Vec3{x, y, z}
-		sample = sample.Normalize()
-		sample = sample.Mul(rand.Float32())
-
-		// scale samples s.t. they're more aligned to center of kernel
-		scale := float32(i) / 64.0
-		scale = lerp(0.1, 1.0, scale*scale)
-		sample = sample.Mul(scale)
-
-		ssaoKernel[i] = sample
-	}
-
-	// generate noise texture
-	// ----------------------
-	ssaoNoise := make([]mgl32.Vec3, 16)
-
-	for i := 0; i < 16; i++ {
-		x := rand.Float32()*2.0 - 1.0
-		y := rand.Float32()*2.0 - 1.0
-		z := float32(0.0) // z-axis is 0.0 as per the original C++ code
-
-		noise := mgl32.Vec3{x, y, z}
-		ssaoNoise[i] = noise
-	}
-	var noiseTexture uint32
-	gl.GenTextures(1, &noiseTexture)
-	gl.BindTexture(gl.TEXTURE_2D, noiseTexture)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 4, 4, 0, gl.RGB, gl.FLOAT, gl.Ptr(ssaoNoise))
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
-
-	// lighting info
-	// -------------
-	lightPos := mgl32.Vec3{2.0, 4.0, -2.0}
-	lightColor := mgl32.Vec3{0.2, 0.2, 0.7}
 
 	// shader configuration
 	// --------------------
-	shaderLightingPass.use()
-	shaderLightingPass.setInt("gPosition", 0)
-	shaderLightingPass.setInt("gNormal", 1)
-	shaderLightingPass.setInt("gAlbedo", 2)
-	shaderLightingPass.setInt("ssao", 3)
-	shaderSSAO.use()
-	shaderSSAO.setInt("gPosition", 0)
-	shaderSSAO.setInt("gNormal", 1)
-	shaderSSAO.setInt("texNoise", 2)
-	shaderSSAOBlur.use()
-	shaderSSAOBlur.setInt("ssaoInput", 0)
+	shader.use()
+	shader.setInt("albedoMap", 0)
+	shader.setInt("normalMap", 1)
+	shader.setInt("metallicMap", 2)
+	shader.setInt("roughnessMap", 3)
+	shader.setInt("aoMap", 4)
+
+	// load PBR material textures
+	// --------------------------
+	albedo := loadTextures("assets/rusted_iron/albedo.png", false)
+	normal := loadTextures("assets/rusted_iron/normal.png", false)
+	metallic := loadTextures("assets/rusted_iron/metallic.png", false)
+	roughness := loadTextures("assets/rusted_iron/roughness.png", false)
+	ao := loadTextures("assets/rusted_iron/ao.png", false)
+
+	// lights
+	// ------
+	lightPositions := []mgl32.Vec3{mgl32.Vec3{0.0, 0.0, 10.0}}
+	lightColors := []mgl32.Vec3{mgl32.Vec3{150.0, 150.0, 150.0}}
+	nrRows := 7
+	nrColumns := 7
+	spacing := float32(2.5)
+
+	projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), windowWidth/windowHeight, 0.1, 100.0)
+	shader.use()
+	shader.setMat4("projection", projection)
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -267,85 +146,65 @@ func main() {
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		// 1. geometry pass: render scene's geometry/color data into gbuffer
-		// -----------------------------------------------------------------
-		gl.BindFramebuffer(gl.FRAMEBUFFER, gBuffer)
-		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-		projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), windowWidth/windowHeight, 0.1, 50.0)
 		view := camera.getViewMatrix()
-		shaderGeometryPass.use()
-		shaderGeometryPass.setMat4("projection", projection)
-		shaderGeometryPass.setMat4("view", view)
+		shader.use()
+		shader.setMat4("view", view)
+		shader.setVec3("camPos", camera.position)
 
-		// room cube
-		model := mgl32.Ident4().Mul4(mgl32.Translate3D(0.0, 7.0, 0.0))
-		model = model.Mul4(mgl32.Scale3D(7.5, 7.5, 7.5))
-		shaderGeometryPass.setMat4("model", model)
-		shaderGeometryPass.setInt("invertedNormals", 1) // invert normals as we're inside the cube
-		renderCube()
-		shaderGeometryPass.setInt("invertedNormals", 0)
-		// backpack model on the floor
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(0.0, 0.5, 0.0))
-		model = model.Mul4(mgl32.HomogRotate3D(mgl32.DegToRad(-90.0), mgl32.Vec3{1.0, 0.0, 0.0}))
-		model = model.Mul4(mgl32.Scale3D(1.0, 1.0, 1.0))
-		shaderGeometryPass.setMat4("model", model)
-		backpack.Draw(*shaderGeometryPass)
-		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_2D, albedo)
+		gl.ActiveTexture(gl.TEXTURE1)
+		gl.BindTexture(gl.TEXTURE_2D, normal)
+		gl.ActiveTexture(gl.TEXTURE2)
+		gl.BindTexture(gl.TEXTURE_2D, metallic)
+		gl.ActiveTexture(gl.TEXTURE3)
+		gl.BindTexture(gl.TEXTURE_2D, roughness)
+		gl.ActiveTexture(gl.TEXTURE4)
+		gl.BindTexture(gl.TEXTURE_2D, ao)
 
-		// 2. generate SSAO texture
-		// ------------------------
-		gl.BindFramebuffer(gl.FRAMEBUFFER, ssaoFBO)
-		gl.Clear(gl.COLOR_BUFFER_BIT)
-		shaderSSAO.use()
-		// Send kernel + rotation
-		for i := 0; i < 64; i++ {
-			shaderSSAO.setVec3(fmt.Sprintf("samples[%d]", i), ssaoKernel[i])
+		// render rows*column number of spheres with material properties defined by textures (they all have the same material properties)
+		for row := 0; row < nrRows; row++ {
+			for col := 0; col < nrColumns; col++ {
+				model := mgl32.Ident4().Mul4(mgl32.Translate3D(
+					float32(col-(nrColumns/2))*spacing,
+					float32(row-(nrRows/2))*spacing,
+					0.0,
+				))
+				shader.setMat4("model", model)
+				normalMatrix := model.Mat3().Inv().Transpose()
+				shader.setMat3("normalMatrix", normalMatrix)
+				renderSphere()
+			}
 		}
-		shaderSSAO.setMat4("projection", projection)
-		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, gPosition)
-		gl.ActiveTexture(gl.TEXTURE1)
-		gl.BindTexture(gl.TEXTURE_2D, gNormal)
-		gl.ActiveTexture(gl.TEXTURE2)
-		gl.BindTexture(gl.TEXTURE_2D, noiseTexture)
-		renderQuad()
-		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 
-		// 3. blur SSAO texture to remove noise
-		// ------------------------------------
-		gl.BindFramebuffer(gl.FRAMEBUFFER, ssaoBlurFBO)
-		gl.Clear(gl.COLOR_BUFFER_BIT)
-		shaderSSAOBlur.use()
-		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, ssaoColorBuffer)
-		renderQuad()
-		gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+		// render light source (simply re-render sphere at light positions)
+		// this looks a bit off as we use the same shader, but it'll make their positions obvious and
+		// keeps the codeprint small.
+		for i := 0; i < len(lightPositions); i++ {
+			// Calculate the new light position
+			newPos := lightPositions[i].Add(mgl32.Vec3{
+				float32(math.Sin(glfw.GetTime()*0.0005) * 5.0), 0.0, 0.0,
+			})
+			lightPositions[i] = newPos
 
-		// 4. lighting pass: traditional deferred Blinn-Phong lighting with added screen-space ambient occlusion
-		// -----------------------------------------------------------------------------------------------------
-		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-		shaderLightingPass.use()
-		// send light relevant uniforms
-		lightPosVec4 := mgl32.Vec4{lightPos.X(), lightPos.Y(), lightPos.Z(), 1.0}
-		lightPosViewVec4 := camera.getViewMatrix().Mul4x1(lightPosVec4)
-		lightPosView := mgl32.Vec3{lightPosViewVec4.X(), lightPosViewVec4.Y(), lightPosViewVec4.Z()}
+			// Set the light position and color in the shader
+			shader.setVec3(fmt.Sprintf("lightPositions[%d]", i), newPos)
+			shader.setVec3(fmt.Sprintf("lightColors[%d]", i), lightColors[i])
 
-		shaderLightingPass.setVec3("light.Position", lightPosView)
-		shaderLightingPass.setVec3("light.Color", lightColor)
-		// Update attenuation parameters
-		linear := float32(0.09)
-		quadratic := float32(0.032)
-		shaderLightingPass.setFloat("light.Linear", linear)
-		shaderLightingPass.setFloat("light.Quadratic", quadratic)
-		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, gPosition)
-		gl.ActiveTexture(gl.TEXTURE1)
-		gl.BindTexture(gl.TEXTURE_2D, gNormal)
-		gl.ActiveTexture(gl.TEXTURE2)
-		gl.BindTexture(gl.TEXTURE_2D, gAlbedo)
-		gl.ActiveTexture(gl.TEXTURE3) // add extra SSAO texture to lighting pass
-		gl.BindTexture(gl.TEXTURE_2D, ssaoColorBufferBlur)
-		renderQuad()
+			// Create and set the model matrix
+			model := mgl32.Ident4().
+				Mul4(mgl32.Translate3D(newPos.X(), newPos.Y(), newPos.Z())).
+				Mul4(mgl32.Scale3D(0.5, 0.5, 0.5))
+
+			shader.setMat4("model", model)
+
+			// Calculate and set the normal matrix
+			normalMatrix := model.Mat3().Inv().Transpose()
+			shader.setMat3("normalMatrix", normalMatrix)
+
+			// Render the sphere
+			renderSphere()
+		}
 
 		// Swap the color buffer and poll events
 		window.SwapBuffers()
@@ -754,4 +613,91 @@ func renderQuad() {
 	gl.BindVertexArray(quadVAO)
 	gl.DrawArrays(gl.TRIANGLE_STRIP, 0, 4)
 	gl.BindVertexArray(0)
+}
+
+var sphereVAO, indexCount uint32
+
+func renderSphere() {
+	if sphereVAO == 0 {
+		gl.GenVertexArrays(1, &sphereVAO)
+
+		var vbo, ebo uint32
+		gl.GenBuffers(1, &vbo)
+		gl.GenBuffers(1, &ebo)
+
+		positions := []mgl32.Vec3{}
+		uv := []mgl32.Vec2{}
+		normals := []mgl32.Vec3{}
+		indices := []uint32{}
+
+		const X_SEGMENTS = 64
+		const Y_SEGMENTS = 64
+		const PI = math.Pi
+
+		// Generate vertex data
+		for x := 0; x <= X_SEGMENTS; x++ {
+			for y := 0; y <= Y_SEGMENTS; y++ {
+				xSegment := float32(x) / float32(X_SEGMENTS)
+				ySegment := float32(y) / float32(Y_SEGMENTS)
+				xPos := float32(math.Cos(float64(xSegment*2.0*PI)) * math.Sin(float64(ySegment*PI)))
+				yPos := float32(math.Cos(float64(ySegment * PI)))
+				zPos := float32(math.Sin(float64(xSegment*2.0*PI)) * math.Sin(float64(ySegment*PI)))
+
+				positions = append(positions, mgl32.Vec3{xPos, yPos, zPos})
+				uv = append(uv, mgl32.Vec2{xSegment, ySegment})
+				normals = append(normals, mgl32.Vec3{xPos, yPos, zPos})
+			}
+		}
+
+		// Generate index data
+		oddRow := false
+		for y := 0; y < Y_SEGMENTS; y++ {
+			if !oddRow {
+				for x := 0; x <= X_SEGMENTS; x++ {
+					indices = append(indices, uint32(y*(X_SEGMENTS+1)+x))
+					indices = append(indices, uint32((y+1)*(X_SEGMENTS+1)+x))
+				}
+			} else {
+				for x := X_SEGMENTS; x >= 0; x-- {
+					indices = append(indices, uint32((y+1)*(X_SEGMENTS+1)+x))
+					indices = append(indices, uint32(y*(X_SEGMENTS+1)+x))
+				}
+			}
+			oddRow = !oddRow
+		}
+		indexCount = uint32(len(indices))
+
+		// Combine vertex data into a single array
+		data := []float32{}
+		for i := 0; i < len(positions); i++ {
+			data = append(data, positions[i].X(), positions[i].Y(), positions[i].Z())
+			if len(normals) > 0 {
+				data = append(data, normals[i].X(), normals[i].Y(), normals[i].Z())
+			}
+			if len(uv) > 0 {
+				data = append(data, uv[i].X(), uv[i].Y())
+			}
+		}
+
+		// Set up VAO, VBO, and EBO
+		gl.BindVertexArray(sphereVAO)
+		gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
+		gl.BufferData(gl.ARRAY_BUFFER, len(data)*4, gl.Ptr(data), gl.STATIC_DRAW)
+		gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo)
+		gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, len(indices)*4, gl.Ptr(indices), gl.STATIC_DRAW)
+		stride := int32((3 + 3 + 2) * 4) // 3 for position, 3 for normal, 2 for UV, all float32 (4 bytes each)
+		// Position attribute
+		gl.EnableVertexAttribArray(0)
+		gl.VertexAttribPointer(0, 3, gl.FLOAT, false, stride, unsafe.Pointer(nil))
+		// Normal attribute
+		gl.EnableVertexAttribArray(1)
+		gl.VertexAttribPointer(1, 3, gl.FLOAT, false, stride, unsafe.Pointer(uintptr(3*4)))
+		// UV attribute
+		gl.EnableVertexAttribArray(2)
+		gl.VertexAttribPointer(2, 2, gl.FLOAT, false, stride, unsafe.Pointer(uintptr(6*4)))
+
+	}
+
+	gl.BindVertexArray(sphereVAO)
+	gl.DrawElements(gl.TRIANGLE_STRIP, int32(indexCount), gl.UNSIGNED_INT, gl.Ptr(nil))
 }

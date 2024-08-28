@@ -117,6 +117,9 @@ func (s *Shader) setInt(name string, value int32) {
 func (s *Shader) setFloat(name string, value float32) {
 	gl.Uniform1f(gl.GetUniformLocation(s.id, gl.Str(name+"\x00")), value)
 }
+func (s *Shader) setMat3(name string, value mgl32.Mat3) {
+	gl.UniformMatrix3fv(gl.GetUniformLocation(s.id, gl.Str(name+"\x00")), 1, false, &value[0])
+}
 func (s *Shader) setMat4(name string, value mgl32.Mat4) {
 	gl.UniformMatrix4fv(gl.GetUniformLocation(s.id, gl.Str(name+"\x00")), 1, false, &value[0])
 }
