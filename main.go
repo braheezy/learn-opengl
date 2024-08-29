@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"unsafe"
 
+	_ "github.com/mdouchement/hdr/codec/rgbe"
+
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
 	"github.com/go-gl/mathgl/mgl32"
@@ -42,9 +44,6 @@ func init() {
 	camera = NewDefaultCameraAtPosition(mgl32.Vec3{0.0, 0.0, 5.0})
 }
 
-func lerp(a, b, f float32) float32 {
-	return a + f*(b-a)
-}
 func main() {
 	/*
 	 * GLFW init and configure
@@ -60,6 +59,7 @@ func main() {
 	// Using hints, set various options for the window we're about to create.
 	glfw.WindowHint(glfw.ContextVersionMajor, 4)
 	glfw.WindowHint(glfw.ContextVersionMinor, 1)
+	glfw.WindowHint(glfw.Samples, 4)
 	// Compatibility profile allows more deprecated function calls over core profile.
 	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
 
@@ -94,44 +94,194 @@ func main() {
 	// Allow OpenGL to perform depth testing, where it uses the z-buffer to know when (not) to
 	// draw overlapping entities
 	gl.Enable(gl.DEPTH_TEST)
+	gl.DepthFunc(gl.LEQUAL)
 
 	/*
 	 * Build and compile our shader program
 	 */
-	shader, err := NewShader("shaders/shader.vs", "shaders/shader.fs", "")
+	pbrShader, err := NewShader("shaders/pbr.vs", "shaders/pbr.fs", "")
+	if err != nil {
+		log.Fatal(err)
+	}
+	equirectangularToCubemapShader, err := NewShader("shaders/cubemap.vs", "shaders/equirectangular.fs", "")
+	if err != nil {
+		log.Fatal(err)
+	}
+	irradianceShader, err := NewShader("shaders/cubemap.vs", "shaders/irradiance.fs", "")
+	if err != nil {
+		log.Fatal(err)
+	}
+	backgroundShader, err := NewShader("shaders/background.vs", "shaders/background.fs", "")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// shader configuration
 	// --------------------
-	shader.use()
-	shader.setInt("albedoMap", 0)
-	shader.setInt("normalMap", 1)
-	shader.setInt("metallicMap", 2)
-	shader.setInt("roughnessMap", 3)
-	shader.setInt("aoMap", 4)
+	pbrShader.use()
+	pbrShader.setInt("irradianceMap", 0)
+	pbrShader.setVec3("albedo", mgl32.Vec3{0.5, 0.0, 0.0})
+	pbrShader.setFloat("ao", 1.0)
 
-	// load PBR material textures
-	// --------------------------
-	albedo := loadTextures("assets/rusted_iron/albedo.png", false)
-	normal := loadTextures("assets/rusted_iron/normal.png", false)
-	metallic := loadTextures("assets/rusted_iron/metallic.png", false)
-	roughness := loadTextures("assets/rusted_iron/roughness.png", false)
-	ao := loadTextures("assets/rusted_iron/ao.png", false)
+	backgroundShader.use()
+	backgroundShader.setInt("environmentMap", 0)
 
 	// lights
 	// ------
-	lightPositions := []mgl32.Vec3{mgl32.Vec3{0.0, 0.0, 10.0}}
-	lightColors := []mgl32.Vec3{mgl32.Vec3{150.0, 150.0, 150.0}}
+	lightPositions := []mgl32.Vec3{
+		{-10.0, 10.0, 10.0},
+		{10.0, 10.0, 10.0},
+		{-10.0, -10.0, 10.0},
+		{10.0, -10.0, 10.0},
+	}
+	lightColors := []mgl32.Vec3{
+		{300.0, 300.0, 300.0},
+		{300.0, 300.0, 300.0},
+		{300.0, 300.0, 300.0},
+		{300.0, 300.0, 300.0},
+	}
 	nrRows := 7
 	nrColumns := 7
 	spacing := float32(2.5)
 
-	projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), windowWidth/windowHeight, 0.1, 100.0)
-	shader.use()
-	shader.setMat4("projection", projection)
+	// pbr: setup framebuffer
+	// ----------------------
+	var captureFBO uint32
+	var captureRBO uint32
+	gl.GenFramebuffers(1, &captureFBO)
+	gl.GenRenderbuffers(1, &captureRBO)
 
+	gl.BindFramebuffer(gl.FRAMEBUFFER, captureFBO)
+	gl.BindRenderbuffer(gl.RENDERBUFFER, captureRBO)
+	gl.RenderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, 512, 512)
+	gl.FramebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, captureRBO)
+
+	// pbr: load the HDR environment map
+	// ---------------------------------
+	// Load the texture data
+	file, err := os.Open("assets/newport_loft.hdr")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+	hdrImg, _, err := image.Decode(file)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	bounds := hdrImg.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	pixelData := make([]float32, 0, width*height*3) // 3 for RGB channels
+	for y := bounds.Max.Y; y > bounds.Min.Y; y-- {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, _ := hdrImg.At(x, y).RGBA() // HDR images do not use alpha, ignore it
+			// Convert from uint32 range (0-65535) to float32 range (0.0-1.0)
+			pixelData = append(pixelData, float32(r)/65535.0, float32(g)/65535.0, float32(b)/65535.0)
+		}
+	}
+
+	var hdrTexture uint32
+	gl.GenTextures(1, &hdrTexture)
+	gl.BindTexture(gl.TEXTURE_2D, hdrTexture)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB16, int32(width), int32(height), 0, gl.RGB, gl.FLOAT, gl.Ptr(pixelData))
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+	// pbr: setup cubemap to render to and attach to framebuffer
+	// ---------------------------------------------------------
+	var envCubemap uint32
+	gl.GenTextures(1, &envCubemap)
+	gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap)
+	for i := 0; i < 6; i++ {
+		gl.TexImage2D(uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+i), 0, gl.RGB16, 512, 512, 0, gl.RGB, gl.FLOAT, gl.Ptr(nil))
+	}
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+	// pbr: set up projection and view matrices for capturing data onto the 6 cubemap face directions
+	// ----------------------------------------------------------------------------------------------
+	captureProjection := mgl32.Perspective(mgl32.DegToRad(90.0), 1.0, 0.1, 10.0)
+	captureViews := []mgl32.Mat4{
+		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{1.0, 0.0, 0.0}, mgl32.Vec3{0.0, -1.0, 0.0}),
+		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{-1.0, 0.0, 0.0}, mgl32.Vec3{0.0, -1.0, 0.0}),
+		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{0.0, 1.0, 0.0}, mgl32.Vec3{0.0, 0.0, 1.0}),
+		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{0.0, -1.0, 0.0}, mgl32.Vec3{0.0, 0.0, -1.0}),
+		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{0.0, 0.0, 1.0}, mgl32.Vec3{0.0, -1.0, 0.0}),
+		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{0.0, 0.0, -1.0}, mgl32.Vec3{0.0, -1.0, 0.0}),
+	}
+
+	// pbr: convert HDR equirectangular environment map to cubemap equivalent
+	// ----------------------------------------------------------------------
+	equirectangularToCubemapShader.use()
+	equirectangularToCubemapShader.setInt("equirectangularMap", 0)
+	equirectangularToCubemapShader.setMat4("projection", captureProjection)
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_2D, hdrTexture)
+
+	gl.Viewport(0, 0, 512, 512) // don't forget to configure the viewport to the capture dimensions.
+	gl.BindFramebuffer(gl.FRAMEBUFFER, captureFBO)
+	for i := 0; i < 6; i++ {
+		equirectangularToCubemapShader.setMat4("view", captureViews[i])
+		gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+i), envCubemap, 0)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+		renderCube()
+	}
+	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+
+	// pbr: create an irradiance cubemap, and re-scale capture FBO to irradiance scale.
+	// --------------------------------------------------------------------------------
+	var irradianceMap uint32
+	gl.GenTextures(1, &irradianceMap)
+	gl.BindTexture(gl.TEXTURE_CUBE_MAP, irradianceMap)
+	for i := 0; i < 6; i++ {
+		gl.TexImage2D(uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+i), 0, gl.RGB16, 32, 32, 0, gl.RGB, gl.FLOAT, gl.Ptr(nil))
+	}
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+	gl.BindFramebuffer(gl.FRAMEBUFFER, captureFBO)
+	gl.BindRenderbuffer(gl.RENDERBUFFER, captureRBO)
+	gl.RenderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, 32, 32)
+
+	// pbr: solve diffuse integral by convolution to create an irradiance (cube)map.
+	// -----------------------------------------------------------------------------
+	irradianceShader.use()
+	irradianceShader.setInt("environmentMap", 0)
+	irradianceShader.setMat4("projection", captureProjection)
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap)
+
+	gl.Viewport(0, 0, 32, 32) // don't forget to configure the viewport to the capture dimensions.
+	gl.BindFramebuffer(gl.FRAMEBUFFER, captureFBO)
+	for i := 0; i < 6; i++ {
+		irradianceShader.setMat4("view", captureViews[i])
+		gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+i), irradianceMap, 0)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+		renderCube()
+	}
+	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+
+	// initialize static shader uniforms before rendering
+	// --------------------------------------------------
+	projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), windowWidth/windowHeight, 0.1, 100.0)
+	pbrShader.use()
+	pbrShader.setMat4("projection", projection)
+	backgroundShader.use()
+	backgroundShader.setMat4("projection", projection)
+
+	// then before rendering, configure the viewport to the original framebuffer's screen dimensions
+	scrWidth, scrHeight := window.GetFramebufferSize()
+	gl.Viewport(0, 0, int32(scrWidth), int32(scrHeight))
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
 		// calculate time stats
@@ -147,32 +297,27 @@ func main() {
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
 		view := camera.getViewMatrix()
-		shader.use()
-		shader.setMat4("view", view)
-		shader.setVec3("camPos", camera.position)
+		pbrShader.use()
+		pbrShader.setMat4("view", view)
+		pbrShader.setVec3("camPos", camera.position)
 
 		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, albedo)
-		gl.ActiveTexture(gl.TEXTURE1)
-		gl.BindTexture(gl.TEXTURE_2D, normal)
-		gl.ActiveTexture(gl.TEXTURE2)
-		gl.BindTexture(gl.TEXTURE_2D, metallic)
-		gl.ActiveTexture(gl.TEXTURE3)
-		gl.BindTexture(gl.TEXTURE_2D, roughness)
-		gl.ActiveTexture(gl.TEXTURE4)
-		gl.BindTexture(gl.TEXTURE_2D, ao)
+		gl.BindTexture(gl.TEXTURE_CUBE_MAP, irradianceMap)
 
 		// render rows*column number of spheres with material properties defined by textures (they all have the same material properties)
 		for row := 0; row < nrRows; row++ {
+			pbrShader.setFloat("metallic", float32(row)/float32(nrRows))
 			for col := 0; col < nrColumns; col++ {
+				pbrShader.setFloat("roughness", mgl32.Clamp(float32(row)/float32(nrColumns), 0.05, 1.0))
+
 				model := mgl32.Ident4().Mul4(mgl32.Translate3D(
 					float32(col-(nrColumns/2))*spacing,
 					float32(row-(nrRows/2))*spacing,
-					0.0,
+					-2.0,
 				))
-				shader.setMat4("model", model)
+				pbrShader.setMat4("model", model)
 				normalMatrix := model.Mat3().Inv().Transpose()
-				shader.setMat3("normalMatrix", normalMatrix)
+				pbrShader.setMat3("normalMatrix", normalMatrix)
 				renderSphere()
 			}
 		}
@@ -183,28 +328,35 @@ func main() {
 		for i := 0; i < len(lightPositions); i++ {
 			// Calculate the new light position
 			newPos := lightPositions[i].Add(mgl32.Vec3{
-				float32(math.Sin(glfw.GetTime()*0.0005) * 5.0), 0.0, 0.0,
+				0.0, 0.0, 0.0,
 			})
 			lightPositions[i] = newPos
 
 			// Set the light position and color in the shader
-			shader.setVec3(fmt.Sprintf("lightPositions[%d]", i), newPos)
-			shader.setVec3(fmt.Sprintf("lightColors[%d]", i), lightColors[i])
+			pbrShader.setVec3(fmt.Sprintf("lightPositions[%d]", i), newPos)
+			pbrShader.setVec3(fmt.Sprintf("lightColors[%d]", i), lightColors[i])
 
 			// Create and set the model matrix
 			model := mgl32.Ident4().
 				Mul4(mgl32.Translate3D(newPos.X(), newPos.Y(), newPos.Z())).
 				Mul4(mgl32.Scale3D(0.5, 0.5, 0.5))
 
-			shader.setMat4("model", model)
+			pbrShader.setMat4("model", model)
 
 			// Calculate and set the normal matrix
 			normalMatrix := model.Mat3().Inv().Transpose()
-			shader.setMat3("normalMatrix", normalMatrix)
+			pbrShader.setMat3("normalMatrix", normalMatrix)
 
 			// Render the sphere
 			renderSphere()
 		}
+
+		// render skybox (render as last to prevent overdraw)
+		backgroundShader.use()
+		backgroundShader.setMat4("view", view)
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap)
+		renderCube()
 
 		// Swap the color buffer and poll events
 		window.SwapBuffers()
@@ -691,10 +843,10 @@ func renderSphere() {
 		gl.VertexAttribPointer(0, 3, gl.FLOAT, false, stride, unsafe.Pointer(nil))
 		// Normal attribute
 		gl.EnableVertexAttribArray(1)
-		gl.VertexAttribPointer(1, 3, gl.FLOAT, false, stride, unsafe.Pointer(uintptr(3*4)))
+		gl.VertexAttribPointer(1, 3, gl.FLOAT, false, stride, gl.Ptr(3*unsafe.Sizeof(float32(0))))
 		// UV attribute
 		gl.EnableVertexAttribArray(2)
-		gl.VertexAttribPointer(2, 2, gl.FLOAT, false, stride, unsafe.Pointer(uintptr(6*4)))
+		gl.VertexAttribPointer(2, 2, gl.FLOAT, false, stride, gl.Ptr(6*unsafe.Sizeof(float32(0))))
 
 	}
 
