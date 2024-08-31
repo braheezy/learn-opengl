@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"math"
 	"runtime"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -22,6 +23,21 @@ const (
 	GameMenu
 	GameWin
 )
+
+type Direction int
+
+const (
+	Up Direction = iota
+	Right
+	Down
+	Left
+)
+
+type Collision struct {
+	hit  bool
+	dir  Direction
+	diff mgl32.Vec2
+}
 
 type Game struct {
 	state         GameState
@@ -92,6 +108,11 @@ func (g *Game) Update(deltaTime float64) {
 	ball.Move(float32(deltaTime), g.width)
 	// check for collisions
 	game.DoCollisions()
+	// did ball reach bottom edge?
+	if ball.obj.position.Y() >= float32(g.height) {
+		g.ResetLevel()
+		g.ResetPlayer()
+	}
 }
 func (g *Game) ProcessInput(deltaTime float64) {
 	if g.state == GameActive {
@@ -139,13 +160,95 @@ func (g *Game) DoCollisions() {
 	for i := range g.levels[g.currentLevel].bricks {
 		box := &g.levels[g.currentLevel].bricks[i]
 		if !box.destroyed {
-			if CheckCollision(ball.obj, *box) {
+			collision := CheckBallCollision(ball, box)
+			if collision.hit {
+				// destroy block if not solid
 				if !box.isSolid {
 					box.destroyed = true
+				}
+				// collision resolution
+				dir := collision.dir
+				diff := collision.diff
+				if dir == Left || dir == Right {
+					// horizontal collision
+					// reverse
+					ball.obj.velocity[0] = -ball.obj.velocity[0]
+					// relocate
+					penetration := ball.radius - float32(math.Abs(float64(diff.X())))
+					if dir == Left {
+						// move ball right
+						ball.obj.position[0] += penetration
+					} else {
+						// move ball left
+						ball.obj.position[0] -= penetration
+					}
+				} else {
+					// vertical collision
+					// reverse
+					ball.obj.velocity[1] = -ball.obj.velocity[1]
+					// relocate
+					penetration := ball.radius - float32(math.Abs(float64(diff.Y())))
+					if dir == Up {
+						// move ball right
+						ball.obj.position[1] -= penetration
+					} else {
+						// move ball left
+						ball.obj.position[1] += penetration
+					}
 				}
 			}
 		}
 	}
+
+	collision := CheckBallCollision(ball, player)
+	if !ball.stuck && collision.hit {
+		// check where it hit the board, and change velocity accordingly
+		centerBoard := player.position.X() + player.size.X()/2.0
+		distance := (ball.obj.position.X() + ball.radius) - centerBoard
+		percentage := distance / (player.size.X() / 2.0)
+		// do the move
+		strength := float32(2.0)
+		oldVelocity := ball.obj.velocity
+		ball.obj.velocity[0] = initialBallVelocity.X() * percentage * strength
+		ball.obj.velocity[1] = -1.0 * float32(math.Max(1.5*math.Abs(float64(ball.obj.velocity[1])), 250.0))
+		ball.obj.velocity = ball.obj.velocity.Normalize().Mul(oldVelocity.Len())
+	}
+}
+func (g *Game) ResetLevel() {
+	switch g.currentLevel {
+	case 0:
+		g.levels[0] = LoadLevel("levels/one.lvl", g.width, g.height/2)
+	case 1:
+		g.levels[1] = LoadLevel("levels/two.lvl", g.width, g.height/2)
+	case 2:
+		g.levels[2] = LoadLevel("levels/three.lvl", g.width, g.height/2)
+	case 3:
+		g.levels[3] = LoadLevel("levels/four.lvl", g.width, g.height/2)
+	}
+}
+func (g *Game) ResetPlayer() {
+	// reset player/ball stats
+	player.size = playerSize
+	player.position = mgl32.Vec2{float32(g.width)/2.0 - playerSize.X()/2.0, float32(g.height) - playerSize.Y()}
+	ball.Reset(player.position.Add(mgl32.Vec2{playerSize.X()/2.0 - ballRadius, -(ballRadius * 2.0)}), initialBallVelocity)
+}
+func VectorDirection(target mgl32.Vec2) Direction {
+	compass := []mgl32.Vec2{
+		{0.0, 1.0},  // up
+		{1.0, 0.0},  // right
+		{0.0, -1.0}, // down
+		{-1.0, 0.0}, // left
+	}
+	max := float32(0)
+	bestMatch := -1
+	for i := 0; i < 4; i++ {
+		dotProduct := target.Normalize().Dot(compass[i])
+		if dotProduct > max {
+			max = dotProduct
+			bestMatch = i
+		}
+	}
+	return Direction(bestMatch)
 }
 func init() {
 	// This is needed to arrange that main() runs on main thread.

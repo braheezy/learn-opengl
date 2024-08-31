@@ -30,12 +30,12 @@ func CheckCollision(one, two GameObject) bool {
 
 }
 
-func CheckBallCollision(one Ball, two GameObject) bool {
+func CheckBallCollision(one *Ball, two *GameObject) Collision {
 	// get center point circle first
 	center := one.obj.position.Add(mgl32.Vec2{one.radius, one.radius})
 
 	// calculate AABB info (center, half-extents)
-	aabbHalfExtents := mgl32.Vec2{two.size.X() / 2.0, two.size.X() / 2.0}
+	aabbHalfExtents := mgl32.Vec2{two.size.X() / 2.0, two.size.Y() / 2.0}
 	aabbCenter := mgl32.Vec2{two.position.X() + aabbHalfExtents.X(), two.position.Y() + aabbHalfExtents.Y()}
 	// get difference vector between both centers
 	difference := center.Sub(aabbCenter)
@@ -43,8 +43,13 @@ func CheckBallCollision(one Ball, two GameObject) bool {
 	// add clamped value to AABB_center and we get the value of box closest to circle
 	closest := aabbCenter.Add(clamped)
 	// retrieve vector between center circle and closest point AABB and check if length <= radius
-	return len(closest.Sub(center)) < int(one.radius)
+	difference = closest.Sub(center)
 
+	if difference.Len() < one.radius {
+		return Collision{true, VectorDirection(difference), difference}
+	} else {
+		return Collision{false, Up, mgl32.Vec2{0.0, 0.0}}
+	}
 }
 func ClampVec2(v, min, max mgl32.Vec2) mgl32.Vec2 {
 	return mgl32.Vec2{
