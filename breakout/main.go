@@ -88,7 +88,10 @@ func (g *Game) Init() {
 
 }
 func (g *Game) Update(deltaTime float64) {
+	// update objects
 	ball.Move(float32(deltaTime), g.width)
+	// check for collisions
+	game.DoCollisions()
 }
 func (g *Game) ProcessInput(deltaTime float64) {
 	if g.state == GameActive {
@@ -132,7 +135,18 @@ func (g *Game) Render() {
 		ball.obj.Draw(renderer)
 	}
 }
-
+func (g *Game) DoCollisions() {
+	for i := range g.levels[g.currentLevel].bricks {
+		box := &g.levels[g.currentLevel].bricks[i]
+		if !box.destroyed {
+			if CheckCollision(ball.obj, *box) {
+				if !box.isSolid {
+					box.destroyed = true
+				}
+			}
+		}
+	}
+}
 func init() {
 	// This is needed to arrange that main() runs on main thread.
 	runtime.LockOSThread()

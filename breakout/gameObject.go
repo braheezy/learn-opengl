@@ -21,3 +21,34 @@ func NewDefaultGameObject() GameObject {
 func (g *GameObject) Draw(rd *SpriteRenderer) {
 	rd.DrawSprite(g.sprite, g.position, SpriteRendererOptions{g.size, g.rotation, g.color})
 }
+
+func CheckCollision(one, two GameObject) bool {
+	// collision x-axis?
+	collisionX := one.position.X()+one.size.X() >= two.position.X() && two.position.X()+two.size.X() >= one.position.X()
+	collisionY := one.position.Y()+one.size.Y() >= two.position.Y() && two.position.Y()+two.size.Y() >= one.position.Y()
+	return collisionX && collisionY
+
+}
+
+func CheckBallCollision(one Ball, two GameObject) bool {
+	// get center point circle first
+	center := one.obj.position.Add(mgl32.Vec2{one.radius, one.radius})
+
+	// calculate AABB info (center, half-extents)
+	aabbHalfExtents := mgl32.Vec2{two.size.X() / 2.0, two.size.X() / 2.0}
+	aabbCenter := mgl32.Vec2{two.position.X() + aabbHalfExtents.X(), two.position.Y() + aabbHalfExtents.Y()}
+	// get difference vector between both centers
+	difference := center.Sub(aabbCenter)
+	clamped := ClampVec2(difference, aabbHalfExtents.Mul(-1.0), aabbHalfExtents)
+	// add clamped value to AABB_center and we get the value of box closest to circle
+	closest := aabbCenter.Add(clamped)
+	// retrieve vector between center circle and closest point AABB and check if length <= radius
+	return len(closest.Sub(center)) < int(one.radius)
+
+}
+func ClampVec2(v, min, max mgl32.Vec2) mgl32.Vec2 {
+	return mgl32.Vec2{
+		mgl32.Clamp(v.X(), min.X(), max.X()),
+		mgl32.Clamp(v.Y(), min.Y(), max.Y()),
+	}
+}
