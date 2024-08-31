@@ -11,6 +11,13 @@ type GameObject struct {
 	sprite                   *Texture2D
 }
 
+func NewDefaultGameObject() GameObject {
+	return GameObject{
+		size:  mgl32.Vec2{1.0, 1.0},
+		color: mgl32.Vec3{1.0, 1.0, 1.0},
+	}
+}
+
 func (g *GameObject) Draw(rd *SpriteRenderer) {
 	rd.DrawSprite(g.sprite, g.position, SpriteRendererOptions{g.size, g.rotation, g.color})
 }

@@ -42,6 +42,10 @@ var (
 	player         *GameObject
 	playerSize     = mgl32.Vec2{100.0, 20.0}
 	playerVelocity = 500.0
+
+	ball                *Ball
+	initialBallVelocity = mgl32.Vec2{100.0, -350.0}
+	ballRadius          = float32(12.5)
 )
 
 func (g *Game) Init() {
@@ -64,8 +68,8 @@ func (g *Game) Init() {
 	two := LoadLevel("levels/two.lvl", g.width, g.height/2)
 	three := LoadLevel("levels/three.lvl", g.width, g.height/2)
 	four := LoadLevel("levels/four.lvl", g.width, g.height/2)
-
 	g.levels = append(g.levels, one, two, three, four)
+
 	playerPosition := mgl32.Vec2{
 		float32(g.width)/2.0 - playerSize.X()/2.0,
 		float32(g.height) - playerSize.Y(),
@@ -75,9 +79,16 @@ func (g *Game) Init() {
 		size:     playerSize,
 		sprite:   GetTexture("paddle"),
 	}
+
+	ballPos := playerPosition.Add(mgl32.Vec2{
+		playerSize.X()/2.0 - ballRadius,
+		-ballRadius * 2.0,
+	})
+	ball = NewBall(ballPos, ballRadius, initialBallVelocity, GetTexture("face"))
+
 }
 func (g *Game) Update(deltaTime float64) {
-
+	ball.Move(float32(deltaTime), g.width)
 }
 func (g *Game) ProcessInput(deltaTime float64) {
 	if g.state == GameActive {
@@ -86,12 +97,22 @@ func (g *Game) ProcessInput(deltaTime float64) {
 		if g.keys[glfw.KeyA] || g.keys[glfw.KeyLeft] {
 			if player.position.X() >= 0.0 {
 				player.position[0] -= float32(velocity)
+				if ball.stuck {
+					ball.obj.position[0] -= float32(velocity)
+				}
 			}
 		}
 		if g.keys[glfw.KeyD] || g.keys[glfw.KeyRight] {
 			if player.position.X() <= float32(g.width)-playerSize.X() {
 				player.position[0] += float32(velocity)
+				if ball.stuck {
+					ball.obj.position[0] += float32(velocity)
+				}
 			}
+		}
+		// player start game
+		if g.keys[glfw.KeySpace] {
+			ball.stuck = false
 		}
 	}
 }
@@ -107,6 +128,8 @@ func (g *Game) Render() {
 		g.levels[g.currentLevel].Draw(renderer)
 		// draw player
 		player.Draw(renderer)
+		// draw ball
+		ball.obj.Draw(renderer)
 	}
 }
 
