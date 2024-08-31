@@ -12,6 +12,9 @@ import (
 	"unsafe"
 
 	_ "github.com/mdouchement/hdr/codec/rgbe"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/opentype"
+	"golang.org/x/image/math/fixed"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -20,9 +23,17 @@ import (
 
 // Settings
 const (
-	windowWidth  = 1280
-	windowHeight = 720
+	windowWidth  = 800
+	windowHeight = 600
 )
+
+// Character represents a glyph's texture and related data.
+type Character struct {
+	TextureID          uint32 // ID handle of the glyph texture
+	width, height      int
+	bearingH, bearingV int   // Offset from baseline to left/top of glyph
+	Advance            int32 // Horizontal offset to advance to next glyph
+}
 
 var (
 	// Track time stats related to frame speed to account for different
@@ -35,6 +46,9 @@ var (
 	// Handle when mouse first enters window and has large offset to center
 	firstMouse = true
 	camera     *Camera
+	Characters map[rune]Character
+
+	VAO, VBO uint32
 )
 
 func init() {
@@ -80,7 +94,7 @@ func main() {
 	// Listen to mouse events
 	window.SetCursorPosCallback(mouseCallback)
 	// Tell glfw to capture and hide the cursor
-	window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+	// window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
 	// Listen to scroll events
 	window.SetScrollCallback(scrollCallback)
 
@@ -93,312 +107,133 @@ func main() {
 
 	// Allow OpenGL to perform depth testing, where it uses the z-buffer to know when (not) to
 	// draw overlapping entities
-	gl.Enable(gl.DEPTH_TEST)
-	gl.DepthFunc(gl.LEQUAL)
-	gl.Enable(gl.TEXTURE_CUBE_MAP_SEAMLESS)
+	gl.Enable(gl.CULL_FACE)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 
 	/*
 	 * Build and compile our shader program
 	 */
-	pbrShader, err := NewShader("shaders/pbr.vs", "shaders/pbr.fs", "")
-	if err != nil {
-		log.Fatal(err)
-	}
-	equirectangularToCubemapShader, err := NewShader("shaders/cubemap.vs", "shaders/equirectangular.fs", "")
-	if err != nil {
-		log.Fatal(err)
-	}
-	irradianceShader, err := NewShader("shaders/cubemap.vs", "shaders/irradiance.fs", "")
-	if err != nil {
-		log.Fatal(err)
-	}
-	backgroundShader, err := NewShader("shaders/background.vs", "shaders/background.fs", "")
-	if err != nil {
-		log.Fatal(err)
-	}
-	prefilterShader, err := NewShader("shaders/cubemap.vs", "shaders/prefilter.fs", "")
-	if err != nil {
-		log.Fatal(err)
-	}
-	brdfShader, err := NewShader("shaders/brdf.vs", "shaders/brdf.fs", "")
+	shader, err := NewShader("shaders/text.vs", "shaders/text.fs", "")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// shader configuration
 	// --------------------
-	pbrShader.use()
-	pbrShader.setInt("irradianceMap", 0)
-	pbrShader.setInt("prefilterMap", 1)
-	pbrShader.setInt("brdfLUT", 2)
-	pbrShader.setInt("albedoMap", 3)
-	pbrShader.setInt("normalMap", 4)
-	pbrShader.setInt("metallicMap", 5)
-	pbrShader.setInt("roughnessMap", 6)
-	pbrShader.setInt("aoMap", 7)
 
-	backgroundShader.use()
-	backgroundShader.setInt("environmentMap", 0)
+	projection := mgl32.Ortho2D(0.0, windowWidth, 0.0, windowHeight)
+	shader.use()
+	shader.setMat4("projection", projection)
 
-	ironAlbedoMap := loadTextures("assets/rusted_iron/albedo.png", false)
-	ironNormalMap := loadTextures("assets/rusted_iron/normal.png", false)
-	ironMetallicMap := loadTextures("assets/rusted_iron/metallic.png", false)
-	ironRoughnessMap := loadTextures("assets/rusted_iron/roughness.png", false)
-	ironAOMap := loadTextures("assets/rusted_iron/ao.png", false)
-
-	goldAlbedoMap := loadTextures("assets/gold/albedo.png", false)
-	goldNormalMap := loadTextures("assets/gold/normal.png", false)
-	goldMetallicMap := loadTextures("assets/gold/metallic.png", false)
-	goldRoughnessMap := loadTextures("assets/gold/roughness.png", false)
-	goldAOMap := loadTextures("assets/gold/ao.png", false)
-
-	grassAlbedoMap := loadTextures("assets/grass/albedo.png", false)
-	grassNormalMap := loadTextures("assets/grass/normal.png", false)
-	grassMetallicMap := loadTextures("assets/grass/metallic.png", false)
-	grassRoughnessMap := loadTextures("assets/grass/roughness.png", false)
-	grassAOMap := loadTextures("assets/grass/ao.png", false)
-
-	plasticAlbedoMap := loadTextures("assets/plastic/albedo.png", false)
-	plasticNormalMap := loadTextures("assets/plastic/normal.png", false)
-	plasticMetallicMap := loadTextures("assets/plastic/metallic.png", false)
-	plasticRoughnessMap := loadTextures("assets/plastic/roughness.png", false)
-	plasticAOMap := loadTextures("assets/plastic/ao.png", false)
-
-	wallAlbedoMap := loadTextures("assets/wall/albedo.png", false)
-	wallNormalMap := loadTextures("assets/wall/normal.png", false)
-	wallMetallicMap := loadTextures("assets/wall/metallic.png", false)
-	wallRoughnessMap := loadTextures("assets/wall/roughness.png", false)
-	wallAOMap := loadTextures("assets/wall/ao.png", false)
-
-	// lights
-	// ------
-	lightPositions := []mgl32.Vec3{
-		{-10.0, 10.0, 10.0},
-		{10.0, 10.0, 10.0},
-		{-10.0, -10.0, 10.0},
-		{10.0, -10.0, 10.0},
-	}
-	lightColors := []mgl32.Vec3{
-		{300.0, 300.0, 300.0},
-		{300.0, 300.0, 300.0},
-		{300.0, 300.0, 300.0},
-		{300.0, 300.0, 300.0},
-	}
-
-	// pbr: setup framebuffer
-	// ----------------------
-	var captureFBO uint32
-	var captureRBO uint32
-	gl.GenFramebuffers(1, &captureFBO)
-	gl.GenRenderbuffers(1, &captureRBO)
-
-	gl.BindFramebuffer(gl.FRAMEBUFFER, captureFBO)
-	gl.BindRenderbuffer(gl.RENDERBUFFER, captureRBO)
-	gl.RenderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, 512, 512)
-	gl.FramebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, captureRBO)
-
-	// pbr: load the HDR environment map
-	// ---------------------------------
-	// Load the texture data
-	file, err := os.Open("assets/newport_loft.hdr")
+	// Initialize freetype context and load the font
+	fontBytes, err := os.ReadFile("assets/Antonio-Regular.ttf")
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println("ERROR: Failed to load font file:", err)
+		return
 	}
-	defer file.Close()
-	hdrImg, _, err := image.Decode(file)
+
+	// Parse the font
+	ttf, err := opentype.Parse(fontBytes)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println("ERROR: Failed to parse font:", err)
+		return
 	}
 
-	bounds := hdrImg.Bounds()
-	width, height := bounds.Dx(), bounds.Dy()
-	pixelData := make([]float32, 0, width*height*3) // 3 for RGB channels
-	for y := bounds.Max.Y; y > bounds.Min.Y; y-- {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			r, g, b, _ := hdrImg.At(x, y).RGBA() // HDR images do not use alpha, ignore it
-			// Convert from uint32 range (0-65535) to float32 range (0.0-1.0)
-			pixelData = append(pixelData, float32(r)/65535.0, float32(g)/65535.0, float32(b)/65535.0)
+	// Load the font face with a specific size
+	face, err := opentype.NewFace(ttf, &opentype.FaceOptions{
+		Size:    48,
+		DPI:     72,
+		Hinting: font.HintingFull,
+	})
+	if err != nil {
+		fmt.Println("ERROR: Failed to create font face:", err)
+		return
+	}
+
+	// Initialize the characters map
+	Characters = make(map[rune]Character)
+
+	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1)
+
+	// Load the first 128 ASCII characters
+	for c := rune(32); c < 127; c++ {
+		// Measure the bounding box and advance to determine the glyph size
+		bounds, advance, ok := face.GlyphBounds(c)
+		if !ok {
+			log.Printf("failed glyph bounds for %v", c)
 		}
-	}
+		width := (bounds.Max.X - bounds.Min.X).Ceil()  // Calculate width
+		height := (bounds.Max.Y - bounds.Min.Y).Ceil() // Calculate height
 
-	var hdrTexture uint32
-	gl.GenTextures(1, &hdrTexture)
-	gl.BindTexture(gl.TEXTURE_2D, hdrTexture)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB16, int32(width), int32(height), 0, gl.RGB, gl.FLOAT, gl.Ptr(pixelData))
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-
-	// pbr: setup cubemap to render to and attach to framebuffer
-	// ---------------------------------------------------------
-	var envCubemap uint32
-	gl.GenTextures(1, &envCubemap)
-	gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap)
-	for i := 0; i < 6; i++ {
-		gl.TexImage2D(uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+i), 0, gl.RGB16, 512, 512, 0, gl.RGB, gl.FLOAT, gl.Ptr(nil))
-	}
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-
-	// pbr: set up projection and view matrices for capturing data onto the 6 cubemap face directions
-	// ----------------------------------------------------------------------------------------------
-	captureProjection := mgl32.Perspective(mgl32.DegToRad(90.0), 1.0, 0.1, 10.0)
-	captureViews := []mgl32.Mat4{
-		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{1.0, 0.0, 0.0}, mgl32.Vec3{0.0, -1.0, 0.0}),
-		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{-1.0, 0.0, 0.0}, mgl32.Vec3{0.0, -1.0, 0.0}),
-		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{0.0, 1.0, 0.0}, mgl32.Vec3{0.0, 0.0, 1.0}),
-		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{0.0, -1.0, 0.0}, mgl32.Vec3{0.0, 0.0, -1.0}),
-		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{0.0, 0.0, 1.0}, mgl32.Vec3{0.0, -1.0, 0.0}),
-		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{0.0, 0.0, -1.0}, mgl32.Vec3{0.0, -1.0, 0.0}),
-	}
-
-	// pbr: convert HDR equirectangular environment map to cubemap equivalent
-	// ----------------------------------------------------------------------
-	equirectangularToCubemapShader.use()
-	equirectangularToCubemapShader.setInt("equirectangularMap", 0)
-	equirectangularToCubemapShader.setMat4("projection", captureProjection)
-	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, hdrTexture)
-
-	gl.Viewport(0, 0, 512, 512) // don't forget to configure the viewport to the capture dimensions.
-	gl.BindFramebuffer(gl.FRAMEBUFFER, captureFBO)
-	for i := 0; i < 6; i++ {
-		equirectangularToCubemapShader.setMat4("view", captureViews[i])
-		gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+i), envCubemap, 0)
-		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-
-		renderCube()
-	}
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
-
-	gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap)
-	gl.GenerateMipmap(gl.TEXTURE_CUBE_MAP)
-
-	// pbr: create an irradiance cubemap, and re-scale capture FBO to irradiance scale.
-	// --------------------------------------------------------------------------------
-	var irradianceMap uint32
-	gl.GenTextures(1, &irradianceMap)
-	gl.BindTexture(gl.TEXTURE_CUBE_MAP, irradianceMap)
-	for i := 0; i < 6; i++ {
-		gl.TexImage2D(uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+i), 0, gl.RGB16, 32, 32, 0, gl.RGB, gl.FLOAT, gl.Ptr(nil))
-	}
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-
-	gl.BindFramebuffer(gl.FRAMEBUFFER, captureFBO)
-	gl.BindRenderbuffer(gl.RENDERBUFFER, captureRBO)
-	gl.RenderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, 32, 32)
-
-	// pbr: solve diffuse integral by convolution to create an irradiance (cube)map.
-	// -----------------------------------------------------------------------------
-	irradianceShader.use()
-	irradianceShader.setInt("environmentMap", 0)
-	irradianceShader.setMat4("projection", captureProjection)
-	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap)
-
-	gl.Viewport(0, 0, 32, 32) // don't forget to configure the viewport to the capture dimensions.
-	gl.BindFramebuffer(gl.FRAMEBUFFER, captureFBO)
-	for i := 0; i < 6; i++ {
-		irradianceShader.setMat4("view", captureViews[i])
-		gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+i), irradianceMap, 0)
-		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-
-		renderCube()
-	}
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
-
-	// pbr: create a pre-filter cubemap, and re-scale capture FBO to pre-filter scale.
-	// --------------------------------------------------------------------------------
-	var prefilterMap uint32
-	gl.GenTextures(1, &prefilterMap)
-	gl.BindTexture(gl.TEXTURE_CUBE_MAP, prefilterMap)
-	for i := 0; i < 6; i++ {
-		gl.TexImage2D(uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+i), 0, gl.RGB16F, 128, 128, 0, gl.RGB, gl.FLOAT, gl.Ptr(nil))
-	}
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
-	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-	// generate mipmaps for the cubemap so OpenGL automatically allocates the required memory.
-	gl.GenerateMipmap(gl.TEXTURE_CUBE_MAP)
-
-	// pbr: run a quasi monte-carlo simulation on the environment lighting to create a prefilter (cube)map.
-	// ----------------------------------------------------------------------------------------------------
-	prefilterShader.use()
-	prefilterShader.setInt("environmentMap", 0)
-	prefilterShader.setMat4("projection", captureProjection)
-	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap)
-
-	gl.BindFramebuffer(gl.FRAMEBUFFER, captureFBO)
-	maxMipLevels := 5
-	for mip := 0; mip < maxMipLevels; mip++ {
-		// reisze framebuffer according to mip-level size.
-		mipWidth := int32(128 * math.Pow(0.5, float64(mip)))
-		mipHeight := int32(128 * math.Pow(0.5, float64(mip)))
-		gl.BindRenderbuffer(gl.RENDERBUFFER, captureRBO)
-		gl.RenderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, mipWidth, mipHeight)
-		gl.Viewport(0, 0, mipWidth, mipHeight)
-
-		roughness := float32(mip) / float32(maxMipLevels-1)
-		prefilterShader.setFloat("roughness", roughness)
-		for i := 0; i < 6; i++ {
-			prefilterShader.setMat4("view", captureViews[i])
-			gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+i), prefilterMap, int32(mip))
-
-			gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-			renderCube()
+		if c == ' ' {
+			// Manually set the width and height to zero for the space character, but use the advance
+			Characters[c] = Character{
+				TextureID: 0, // No texture needed for space
+				width:     0,
+				height:    0,
+				bearingH:  0,
+				bearingV:  0,
+				Advance:   int32(advance), // Use the advance value to move the cursor forward
+			}
+			continue
 		}
+
+		if width <= 0 || height <= 0 {
+			fmt.Printf("Skipping character %v: invalid glyph size (width: %v, height: %v)\n", c, width, height)
+			continue
+		}
+
+		dst := image.NewGray(image.Rect(0, 0, width, height))
+		d := font.Drawer{
+			Dst:  dst,
+			Src:  image.White,
+			Face: face,
+			Dot:  fixed.P(-bounds.Min.X.Ceil(), -bounds.Min.Y.Ceil()),
+		}
+		d.DrawString(string(c))
+
+		// Create a texture in OpenGL
+		var texture uint32
+		gl.GenTextures(1, &texture)
+		gl.BindTexture(gl.TEXTURE_2D, texture)
+
+		// Upload the texture data to OpenGL
+		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RED, int32(width), int32(height), 0, gl.RED, gl.UNSIGNED_BYTE, gl.Ptr(dst.Pix))
+
+		// Set texture parameters to ensure proper glyph rendering
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+		// Store the character with relevant OpenGL and bounding information
+		Characters[c] = Character{
+			TextureID: texture,
+			width:     width,
+			height:    height,
+			bearingH:  bounds.Min.X.Ceil(),
+			bearingV:  bounds.Max.Y.Ceil(),
+			Advance:   int32(advance),
+		}
+
 	}
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 
-	// pbr: generate a 2D LUT from the BRDF equations used.
-	// ----------------------------------------------------
-	var brdfLUTTexture uint32
-	gl.GenTextures(1, &brdfLUTTexture)
+	gl.BindTexture(gl.TEXTURE_2D, 0)
+	// Cleanup resources
+	face.Close()
 
-	// pre-allocate enough memory for the LUT texture.
-	gl.BindTexture(gl.TEXTURE_2D, brdfLUTTexture)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RG16F, 512, 512, 0, gl.RG, gl.FLOAT, gl.Ptr(nil))
-	// be sure to set wrapping mode to gl.CLAMP_TO_EDGE
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-
-	// then re-configure capture framebuffer object and render screen-space quad with BRDF shader.
-	gl.BindFramebuffer(gl.FRAMEBUFFER, captureFBO)
-	gl.BindRenderbuffer(gl.RENDERBUFFER, captureRBO)
-	gl.RenderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, 512, 512)
-	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, brdfLUTTexture, 0)
-
-	gl.Viewport(0, 0, 512, 512)
-	brdfShader.use()
-	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-	renderQuad()
-
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
-
-	// initialize static shader uniforms before rendering
-	// --------------------------------------------------
-	projection := mgl32.Perspective(mgl32.DegToRad(camera.zoom), windowWidth/windowHeight, 0.1, 100.0)
-	pbrShader.use()
-	pbrShader.setMat4("projection", projection)
-	backgroundShader.use()
-	backgroundShader.setMat4("projection", projection)
-
-	// then before rendering, configure the viewport to the original framebuffer's screen dimensions
-	scrWidth, scrHeight := window.GetFramebufferSize()
-	gl.Viewport(0, 0, int32(scrWidth), int32(scrHeight))
+	// configure VAO/VBO for texture quads
+	// -----------------------------------
+	gl.GenVertexArrays(1, &VAO)
+	gl.GenBuffers(1, &VBO)
+	gl.BindVertexArray(VAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, VBO)
+	gl.BufferData(gl.ARRAY_BUFFER, int(6*4*unsafe.Sizeof(float32(0))), gl.Ptr(nil), gl.DYNAMIC_DRAW)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 4, gl.FLOAT, false, int32(4*unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+	gl.BindVertexArray(0)
 
 	// Run the render loop until the window is closed by the user.
 	for !window.ShouldClose() {
@@ -413,147 +248,69 @@ func main() {
 		gl.ClearColor(0.1, 0.1, 0.1, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		view := camera.getViewMatrix()
-		pbrShader.use()
-		pbrShader.setMat4("view", view)
-		pbrShader.setVec3("camPos", camera.position)
-
-		// render scene, supplying the convoluted irradiance map to the final shader.
-		// --------------------------------------------------------------------------
-		// bind pre-computed IBL data
-		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_CUBE_MAP, irradianceMap)
-		gl.ActiveTexture(gl.TEXTURE1)
-		gl.BindTexture(gl.TEXTURE_CUBE_MAP, prefilterMap)
-		gl.ActiveTexture(gl.TEXTURE2)
-		gl.BindTexture(gl.TEXTURE_2D, brdfLUTTexture)
-
-		// rusted iron
-		gl.ActiveTexture(gl.TEXTURE3)
-		gl.BindTexture(gl.TEXTURE_2D, ironAlbedoMap)
-		gl.ActiveTexture(gl.TEXTURE4)
-		gl.BindTexture(gl.TEXTURE_2D, ironNormalMap)
-		gl.ActiveTexture(gl.TEXTURE5)
-		gl.BindTexture(gl.TEXTURE_2D, ironMetallicMap)
-		gl.ActiveTexture(gl.TEXTURE6)
-		gl.BindTexture(gl.TEXTURE_2D, ironRoughnessMap)
-		gl.ActiveTexture(gl.TEXTURE7)
-		gl.BindTexture(gl.TEXTURE_2D, ironAOMap)
-
-		model := mgl32.Ident4().Mul4(mgl32.Translate3D(-5.0, 0.0, 2.0))
-		pbrShader.setMat4("model", model)
-		pbrShader.setMat3("normalMatrix", model.Mat3().Inv().Transpose())
-		renderSphere()
-
-		// gold
-		gl.ActiveTexture(gl.TEXTURE3)
-		gl.BindTexture(gl.TEXTURE_2D, goldAlbedoMap)
-		gl.ActiveTexture(gl.TEXTURE4)
-		gl.BindTexture(gl.TEXTURE_2D, goldNormalMap)
-		gl.ActiveTexture(gl.TEXTURE5)
-		gl.BindTexture(gl.TEXTURE_2D, goldMetallicMap)
-		gl.ActiveTexture(gl.TEXTURE6)
-		gl.BindTexture(gl.TEXTURE_2D, goldRoughnessMap)
-		gl.ActiveTexture(gl.TEXTURE7)
-		gl.BindTexture(gl.TEXTURE_2D, goldAOMap)
-
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(-3.0, 0.0, 2.0))
-		pbrShader.setMat4("model", model)
-		pbrShader.setMat3("normalMatrix", model.Mat3().Inv().Transpose())
-		renderSphere()
-
-		// grass
-		gl.ActiveTexture(gl.TEXTURE3)
-		gl.BindTexture(gl.TEXTURE_2D, grassAlbedoMap)
-		gl.ActiveTexture(gl.TEXTURE4)
-		gl.BindTexture(gl.TEXTURE_2D, grassNormalMap)
-		gl.ActiveTexture(gl.TEXTURE5)
-		gl.BindTexture(gl.TEXTURE_2D, grassMetallicMap)
-		gl.ActiveTexture(gl.TEXTURE6)
-		gl.BindTexture(gl.TEXTURE_2D, grassRoughnessMap)
-		gl.ActiveTexture(gl.TEXTURE7)
-		gl.BindTexture(gl.TEXTURE_2D, grassAOMap)
-
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(-1.0, 0.0, 2.0))
-		pbrShader.setMat4("model", model)
-		pbrShader.setMat3("normalMatrix", model.Mat3().Inv().Transpose())
-		renderSphere()
-
-		// plastic
-		gl.ActiveTexture(gl.TEXTURE3)
-		gl.BindTexture(gl.TEXTURE_2D, plasticAlbedoMap)
-		gl.ActiveTexture(gl.TEXTURE4)
-		gl.BindTexture(gl.TEXTURE_2D, plasticNormalMap)
-		gl.ActiveTexture(gl.TEXTURE5)
-		gl.BindTexture(gl.TEXTURE_2D, plasticMetallicMap)
-		gl.ActiveTexture(gl.TEXTURE6)
-		gl.BindTexture(gl.TEXTURE_2D, plasticRoughnessMap)
-		gl.ActiveTexture(gl.TEXTURE7)
-		gl.BindTexture(gl.TEXTURE_2D, plasticAOMap)
-
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(1.0, 0.0, 2.0))
-		pbrShader.setMat4("model", model)
-		pbrShader.setMat3("normalMatrix", model.Mat3().Inv().Transpose())
-		renderSphere()
-
-		// wall
-		gl.ActiveTexture(gl.TEXTURE3)
-		gl.BindTexture(gl.TEXTURE_2D, wallAlbedoMap)
-		gl.ActiveTexture(gl.TEXTURE4)
-		gl.BindTexture(gl.TEXTURE_2D, wallNormalMap)
-		gl.ActiveTexture(gl.TEXTURE5)
-		gl.BindTexture(gl.TEXTURE_2D, wallMetallicMap)
-		gl.ActiveTexture(gl.TEXTURE6)
-		gl.BindTexture(gl.TEXTURE_2D, wallRoughnessMap)
-		gl.ActiveTexture(gl.TEXTURE7)
-		gl.BindTexture(gl.TEXTURE_2D, wallAOMap)
-
-		model = mgl32.Ident4().Mul4(mgl32.Translate3D(3.0, 0.0, 2.0))
-		pbrShader.setMat4("model", model)
-		pbrShader.setMat3("normalMatrix", model.Mat3().Inv().Transpose())
-		renderSphere()
-
-		// render light source (simply re-render sphere at light positions)
-		// this looks a bit off as we use the same shader, but it'll make their positions obvious and
-		// keeps the codeprint small.
-		for i := 0; i < len(lightPositions); i++ {
-			// Calculate the new light position
-			newPos := lightPositions[i].Add(mgl32.Vec3{
-				0.0, 0.0, 0.0,
-			})
-			lightPositions[i] = newPos
-
-			// Set the light position and color in the shader
-			pbrShader.setVec3(fmt.Sprintf("lightPositions[%d]", i), newPos)
-			pbrShader.setVec3(fmt.Sprintf("lightColors[%d]", i), lightColors[i])
-
-			// Create and set the model matrix
-			model := mgl32.Ident4().
-				Mul4(mgl32.Translate3D(newPos.X(), newPos.Y(), newPos.Z())).
-				Mul4(mgl32.Scale3D(0.5, 0.5, 0.5))
-
-			pbrShader.setMat4("model", model)
-
-			// Calculate and set the normal matrix
-			normalMatrix := model.Mat3().Inv().Transpose()
-			pbrShader.setMat3("normalMatrix", normalMatrix)
-
-			// Render the sphere
-			renderSphere()
-		}
-
-		// render skybox (render as last to prevent overdraw)
-		backgroundShader.use()
-		backgroundShader.setMat4("view", view)
-		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap)
-		renderCube()
+		renderText(shader, "This is sample text", 25.0, 25.0, 1.0, mgl32.Vec3{0.5, 0.8, 0.2})
+		renderText(shader, "Learn OpenGL in Go!", 540.0, 570.0, 0.5, mgl32.Vec3{0.3, 0.7, 0.9})
 
 		// Swap the color buffer and poll events
 		window.SwapBuffers()
 		glfw.PollEvents()
 	}
 
+}
+
+// render line of text
+func renderText(shader *Shader, text string, x, y, scale float32, color mgl32.Vec3) {
+	// Activate corresponding render state
+	shader.use()
+	gl.Uniform3f(gl.GetUniformLocation(shader.id, gl.Str("textColor\x00")), color.X(), color.Y(), color.Z())
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindVertexArray(VAO)
+
+	// Iterate through all characters in the text string
+	for _, char := range text {
+		ch, ok := Characters[char]
+		if !ok {
+			fmt.Printf("Skipping %v\n", ch)
+			continue // Skip characters that are not loaded
+		}
+
+		// Calculate position and size of the character quad
+		xpos := x + float32(ch.bearingH)*scale
+		ypos := y - float32(ch.bearingV)*scale
+
+		w := float32(ch.width) * scale
+		h := float32(ch.height) * scale
+
+		// Update VBO for each character
+		vertices := []float32{
+			xpos, ypos + h, 0.0, 0.0,
+			xpos, ypos, 0.0, 1.0,
+			xpos + w, ypos, 1.0, 1.0,
+
+			xpos, ypos + h, 0.0, 0.0,
+			xpos + w, ypos, 1.0, 1.0,
+			xpos + w, ypos + h, 1.0, 0.0,
+		}
+
+		// Render glyph texture over quad
+		gl.BindTexture(gl.TEXTURE_2D, ch.TextureID)
+
+		// Update content of VBO memory
+		gl.BindBuffer(gl.ARRAY_BUFFER, VBO)
+		gl.BufferSubData(gl.ARRAY_BUFFER, 0, len(vertices)*int(unsafe.Sizeof(vertices[0])), gl.Ptr(vertices))
+
+		// Render quad
+		gl.DrawArrays(gl.TRIANGLES, 0, 6)
+
+		gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+
+		// Now advance cursors for next glyph
+		newX := float32(ch.Advance>>6) * scale
+		x += newX // Bitshift by 6 to get value in pixels
+	}
+
+	gl.BindVertexArray(0)
+	gl.BindTexture(gl.TEXTURE_2D, 0)
 }
 
 // framebufferSizeCallback is called when the gl viewport is resized.
