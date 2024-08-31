@@ -27,6 +27,8 @@ type Game struct {
 	state         GameState
 	keys          [1024]bool
 	width, height int
+	levels        []GameLevel
+	currentLevel  int
 }
 
 var game = Game{
@@ -35,6 +37,12 @@ var game = Game{
 	height: windowHeight,
 }
 var renderer *SpriteRenderer
+
+var (
+	player         *GameObject
+	playerSize     = mgl32.Vec2{100.0, 20.0}
+	playerVelocity = 500.0
+)
 
 func (g *Game) Init() {
 	// load shaders
@@ -47,15 +55,59 @@ func (g *Game) Init() {
 	renderer = NewSpriteRenderer(GetShader("sprite"))
 	// load textures
 	LoadTexture("textures/awesomeface.png", true, "face")
+	LoadTexture("textures/block.png", false, "block")
+	LoadTexture("textures/block_solid.png", false, "block_solid")
+	LoadTexture("textures/background.jpg", false, "background")
+	LoadTexture("textures/paddle.png", true, "paddle")
+	// load levels
+	one := LoadLevel("levels/one.lvl", g.width, g.height/2)
+	two := LoadLevel("levels/two.lvl", g.width, g.height/2)
+	three := LoadLevel("levels/three.lvl", g.width, g.height/2)
+	four := LoadLevel("levels/four.lvl", g.width, g.height/2)
+
+	g.levels = append(g.levels, one, two, three, four)
+	playerPosition := mgl32.Vec2{
+		float32(g.width)/2.0 - playerSize.X()/2.0,
+		float32(g.height) - playerSize.Y(),
+	}
+	player = &GameObject{
+		position: playerPosition,
+		size:     playerSize,
+		sprite:   GetTexture("paddle"),
+	}
 }
 func (g *Game) Update(deltaTime float64) {
 
 }
 func (g *Game) ProcessInput(deltaTime float64) {
-
+	if g.state == GameActive {
+		velocity := playerVelocity * deltaTime
+		// move playerboard
+		if g.keys[glfw.KeyA] || g.keys[glfw.KeyLeft] {
+			if player.position.X() >= 0.0 {
+				player.position[0] -= float32(velocity)
+			}
+		}
+		if g.keys[glfw.KeyD] || g.keys[glfw.KeyRight] {
+			if player.position.X() <= float32(g.width)-playerSize.X() {
+				player.position[0] += float32(velocity)
+			}
+		}
+	}
 }
 func (g *Game) Render() {
-	renderer.drawSprite(GetTexture("face"), mgl32.Vec2{200.0, 200.0}, mgl32.Vec2{300.0, 400.0}, 45.0, mgl32.Vec3{0.0, 1.0, 0.0})
+	if g.state == GameActive {
+		// draw background
+		renderer.DrawSprite(
+			GetTexture("background"),
+			mgl32.Vec2{0.0, 0.0},
+			SpriteRendererOptions{size: mgl32.Vec2{float32(g.width), float32(g.height)}},
+		)
+		// draw level
+		g.levels[g.currentLevel].Draw(renderer)
+		// draw player
+		player.Draw(renderer)
+	}
 }
 
 func init() {

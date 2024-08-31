@@ -12,12 +12,22 @@ type SpriteRenderer struct {
 	quadVAO uint32
 }
 
-func (sp *SpriteRenderer) DrawSprite(texture *Texture2D, position mgl32.Vec2) {
+type SpriteRendererOptions struct {
+	size   mgl32.Vec2
+	rotate float32
+	color  mgl32.Vec3
+}
 
-	size := mgl32.Vec2{10.0, 10.0}
-	rotate := float32(0)
-	color := mgl32.Vec3{1.0}
-	sp.drawSprite(texture, position, size, rotate, color)
+func (sp *SpriteRenderer) DrawSprite(texture *Texture2D, position mgl32.Vec2, opts SpriteRendererOptions) {
+
+	// Set default values if zero values are provided
+	if opts.size == (mgl32.Vec2{}) {
+		opts.size = mgl32.Vec2{10.0, 10.0}
+	}
+	if opts.color == (mgl32.Vec3{}) {
+		opts.color = mgl32.Vec3{1, 1, 1} // Default to white color
+	}
+	sp.drawSprite(texture, position, opts.size, opts.rotate, opts.color)
 }
 func (sp *SpriteRenderer) drawSprite(texture *Texture2D, position mgl32.Vec2, size mgl32.Vec2, rotate float32, color mgl32.Vec3) {
 
