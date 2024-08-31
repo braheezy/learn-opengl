@@ -12,7 +12,7 @@ type Shader struct {
 	id uint32
 }
 
-func NewShader(vertexShaderSource string, fragmentShaderSource string, geometryShaderSource string) (Shader, error) {
+func NewShader(vertexShaderSource string, fragmentShaderSource string, geometryShaderSource string) (*Shader, error) {
 	var geometryShader uint32
 
 	if geometryShaderSource != "" {
@@ -65,7 +65,7 @@ func NewShader(vertexShaderSource string, fragmentShaderSource string, geometryS
 		gl.DeleteShader(geometryShader)
 	}
 
-	return Shader{id: ID}, nil
+	return &Shader{id: ID}, nil
 }
 
 func checkCompile(shader uint32, shaderType string) error {
@@ -79,8 +79,9 @@ func checkCompile(shader uint32, shaderType string) error {
 	return nil
 }
 
-func (s *Shader) use() {
+func (s *Shader) use() *Shader {
 	gl.UseProgram(s.id)
+	return s
 }
 
 func (s *Shader) setBool(name string, value bool) {

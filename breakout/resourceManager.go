@@ -1,26 +1,37 @@
 package main
 
 import (
-	"fmt"
+	"embed"
 	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"log"
-	"os"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 )
 
 type ResourceManager struct {
-	shaders  map[string]Shader
-	textures map[string]Texture2D
+	shaders  map[string]*Shader
+	textures map[string]*Texture2D
 }
 
 // Global instance of the resource manager.
 var manager = &ResourceManager{
-	shaders:  make(map[string]Shader),
-	textures: make(map[string]Texture2D),
+	shaders:  make(map[string]*Shader),
+	textures: make(map[string]*Texture2D),
 }
 
-func LoadShader(vShaderFile, fShaderFile, gShaderFile, name string) Shader {
+// Embed all shader files from the shaders/ directory
+//
+//go:embed shaders/*
+var shaderFiles embed.FS
+
+// Embed all texture files from the textures/ directory
+//
+//go:embed textures/*
+var textureFiles embed.FS
+
+func LoadShader(vShaderFile, fShaderFile, gShaderFile, name string) *Shader {
 	var err error
 	manager.shaders[name], err = loadShaderFromFile(vShaderFile, fShaderFile, gShaderFile)
 	if err != nil {
@@ -29,42 +40,42 @@ func LoadShader(vShaderFile, fShaderFile, gShaderFile, name string) Shader {
 	return manager.shaders[name]
 }
 
-func GetShader(name string) Shader {
+func GetShader(name string) *Shader {
 	return manager.shaders[name]
 }
 
-func LoadTexture(file string, alpha bool, name string) Texture2D {
+func LoadTexture(file string, alpha bool, name string) *Texture2D {
 	manager.textures[name] = loadTextureFromFile(file, alpha)
 	return manager.textures[name]
 }
 
-func GetTexture(name string) Texture2D {
+func GetTexture(name string) *Texture2D {
 	return manager.textures[name]
 }
 
-func loadShaderFromFile(vShaderFile, fShaderFile, gShaderFile string) (Shader, error) {
+func loadShaderFromFile(vShaderFile, fShaderFile, gShaderFile string) (*Shader, error) {
 	// * 1. Retrieve the vertex/fragment source code from file paths
 	var vertexCode, fragmentCode, geometryCode string
 
 	// Read vertex shader file
-	vBytes, err := os.ReadFile(vShaderFile)
+	vBytes, err := shaderFiles.ReadFile(vShaderFile)
 	if err != nil {
-		fmt.Println("ERROR::SHADER: Failed to read vertex shader file:", err)
+		log.Fatalf("ERROR::SHADER: Failed to read vertex shader file: %v", err)
 	}
 	vertexCode = string(vBytes)
 
 	// Read fragment shader file
-	fBytes, err := os.ReadFile(fShaderFile)
+	fBytes, err := shaderFiles.ReadFile(fShaderFile)
 	if err != nil {
-		fmt.Println("ERROR::SHADER: Failed to read fragment shader file:", err)
+		log.Fatalf("ERROR::SHADER: Failed to read fragment shader file: %v", err)
 	}
 	fragmentCode = string(fBytes)
 
 	// Read geometry shader file if provided
 	if gShaderFile != "" {
-		gBytes, err := os.ReadFile(gShaderFile)
+		gBytes, err := shaderFiles.ReadFile(gShaderFile)
 		if err != nil {
-			fmt.Println("ERROR::SHADER: Failed to read geometry shader file:", err)
+			log.Fatalf("ERROR::SHADER: Failed to read geometry shader file: %v", err)
 		}
 		geometryCode = string(gBytes)
 	}
@@ -73,8 +84,8 @@ func loadShaderFromFile(vShaderFile, fShaderFile, gShaderFile string) (Shader, e
 	return NewShader(vertexCode, fragmentCode, geometryCode)
 }
 
-func loadTextureFromFile(file string, alpha bool) Texture2D {
-	var texture Texture2D
+func loadTextureFromFile(file string, alpha bool) *Texture2D {
+	texture := NewTexture()
 	if alpha {
 		texture.Internal_Format = gl.RGBA
 		texture.Image_Format = gl.RGBA
@@ -87,7 +98,7 @@ func loadTextureFromFile(file string, alpha bool) Texture2D {
 func loadPixels(filePath string) ([]byte, int32, int32) {
 
 	// Open and decode the texture image file
-	textureFile, err := os.Open(filePath)
+	textureFile, err := textureFiles.Open(filePath)
 	if err != nil {
 		log.Fatalf("Failed to open texture file: %v", err)
 	}

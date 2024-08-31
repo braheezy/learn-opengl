@@ -2,9 +2,11 @@ package main
 
 import (
 	"log"
+	"runtime"
 
-	"github.com/go-gl/gl/v2.1/gl"
+	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 // Settings
@@ -32,9 +34,19 @@ var game = Game{
 	width:  windowWidth,
 	height: windowHeight,
 }
+var renderer *SpriteRenderer
 
 func (g *Game) Init() {
-
+	// load shaders
+	LoadShader("shaders/sprite.vs", "shaders/sprite.fs", "", "sprite")
+	// configure shaders
+	projection := mgl32.Ortho(0.0, float32(g.width), float32(g.height), 0.0, -1.0, 1.0)
+	GetShader("sprite").use().setInt("image", 0)
+	GetShader("sprite").use().setMat4("projection", projection)
+	// set render-specific controls
+	renderer = NewSpriteRenderer(GetShader("sprite"))
+	// load textures
+	LoadTexture("textures/awesomeface.png", true, "face")
 }
 func (g *Game) Update(deltaTime float64) {
 
@@ -43,8 +55,14 @@ func (g *Game) ProcessInput(deltaTime float64) {
 
 }
 func (g *Game) Render() {
-
+	renderer.drawSprite(GetTexture("face"), mgl32.Vec2{200.0, 200.0}, mgl32.Vec2{300.0, 400.0}, 45.0, mgl32.Vec3{0.0, 1.0, 0.0})
 }
+
+func init() {
+	// This is needed to arrange that main() runs on main thread.
+	runtime.LockOSThread()
+}
+
 func main() {
 	//* GLFW init and configure
 	err := glfw.Init()
@@ -65,17 +83,16 @@ func main() {
 		log.Fatal(err)
 	}
 	window.MakeContextCurrent()
-	//* Load OS-specific OpenGL function pointers
-
-	if err := gl.Init(); err != nil {
-		log.Fatal(err)
-	}
-
 	//* Callbacks
 	// Set the function that is run every time the viewport is resized by the user.
 	window.SetFramebufferSizeCallback(framebufferSizeCallback)
 	// Listen to mouse events
 	window.SetKeyCallback(keyCallback)
+
+	//* Load OS-specific OpenGL function pointers
+	if err := gl.Init(); err != nil {
+		log.Fatal(err)
+	}
 
 	//* OpenGL configuration
 	gl.Viewport(0, 0, windowWidth, windowHeight)
