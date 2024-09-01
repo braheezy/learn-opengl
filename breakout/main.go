@@ -62,23 +62,30 @@ var (
 	ball                *Ball
 	initialBallVelocity = mgl32.Vec2{100.0, -350.0}
 	ballRadius          = float32(12.5)
+
+	particles *ParticleGenerator
 )
 
 func (g *Game) Init() {
 	// load shaders
 	LoadShader("shaders/sprite.vs", "shaders/sprite.fs", "", "sprite")
+	LoadShader("shaders/particle.vs", "shaders/particle.fs", "", "particle")
 	// configure shaders
 	projection := mgl32.Ortho(0.0, float32(g.width), float32(g.height), 0.0, -1.0, 1.0)
 	GetShader("sprite").use().setInt("image", 0)
 	GetShader("sprite").use().setMat4("projection", projection)
-	// set render-specific controls
-	renderer = NewSpriteRenderer(GetShader("sprite"))
+	GetShader("particle").use().setInt("sprite", 0)
+	GetShader("particle").use().setMat4("projection", projection)
 	// load textures
 	LoadTexture("textures/awesomeface.png", true, "face")
 	LoadTexture("textures/block.png", false, "block")
 	LoadTexture("textures/block_solid.png", false, "block_solid")
 	LoadTexture("textures/background.jpg", false, "background")
 	LoadTexture("textures/paddle.png", true, "paddle")
+	LoadTexture("textures/particle.png", true, "particle")
+	// set render-specific controls
+	renderer = NewSpriteRenderer(GetShader("sprite"))
+	particles = NewParticleGenerator(GetShader("particle"), GetTexture("particle"), 500)
 	// load levels
 	one := LoadLevel("levels/one.lvl", g.width, g.height/2)
 	two := LoadLevel("levels/two.lvl", g.width, g.height/2)
@@ -108,6 +115,8 @@ func (g *Game) Update(deltaTime float64) {
 	ball.Move(float32(deltaTime), g.width)
 	// check for collisions
 	game.DoCollisions()
+	// update particles
+	particles.Update(float32(deltaTime), ball, 2, mgl32.Vec2{ball.radius / 2.0, ball.radius / 2.0})
 	// did ball reach bottom edge?
 	if ball.obj.position.Y() >= float32(g.height) {
 		g.ResetLevel()
@@ -152,6 +161,8 @@ func (g *Game) Render() {
 		g.levels[g.currentLevel].Draw(renderer)
 		// draw player
 		player.Draw(renderer)
+		// draw particles
+		particles.Draw()
 		// draw ball
 		ball.obj.Draw(renderer)
 	}
