@@ -64,12 +64,16 @@ var (
 	ballRadius          = float32(12.5)
 
 	particles *ParticleGenerator
+
+	effects   *PostProcessor
+	shakeTime = float32(0)
 )
 
 func (g *Game) Init() {
 	// load shaders
 	LoadShader("shaders/sprite.vs", "shaders/sprite.fs", "", "sprite")
 	LoadShader("shaders/particle.vs", "shaders/particle.fs", "", "particle")
+	LoadShader("shaders/post_processing.vs", "shaders/post_processing.fs", "", "postprocessing")
 	// configure shaders
 	projection := mgl32.Ortho(0.0, float32(g.width), float32(g.height), 0.0, -1.0, 1.0)
 	GetShader("sprite").use().setInt("image", 0)
@@ -86,6 +90,7 @@ func (g *Game) Init() {
 	// set render-specific controls
 	renderer = NewSpriteRenderer(GetShader("sprite"))
 	particles = NewParticleGenerator(GetShader("particle"), GetTexture("particle"), 500)
+	effects = NewPostProcessor(GetShader("postprocessing"), int32(g.width), int32(g.height))
 	// load levels
 	one := LoadLevel("levels/one.lvl", g.width, g.height/2)
 	two := LoadLevel("levels/two.lvl", g.width, g.height/2)
@@ -122,6 +127,12 @@ func (g *Game) Update(deltaTime float64) {
 		g.ResetLevel()
 		g.ResetPlayer()
 	}
+	if shakeTime > 0.0 {
+		shakeTime -= float32(deltaTime)
+		if shakeTime <= 0.0 {
+			effects.shake = false
+		}
+	}
 }
 func (g *Game) ProcessInput(deltaTime float64) {
 	if g.state == GameActive {
@@ -151,6 +162,9 @@ func (g *Game) ProcessInput(deltaTime float64) {
 }
 func (g *Game) Render() {
 	if g.state == GameActive {
+
+		effects.BeginRender()
+
 		// draw background
 		renderer.DrawSprite(
 			GetTexture("background"),
@@ -165,6 +179,9 @@ func (g *Game) Render() {
 		particles.Draw()
 		// draw ball
 		ball.obj.Draw(renderer)
+
+		effects.EndRender()
+		effects.Render(float32(glfw.GetTime()))
 	}
 }
 func (g *Game) DoCollisions() {
@@ -176,6 +193,10 @@ func (g *Game) DoCollisions() {
 				// destroy block if not solid
 				if !box.isSolid {
 					box.destroyed = true
+				} else {
+					// if block is solid, shake it
+					shakeTime = 0.05
+					effects.shake = true
 				}
 				// collision resolution
 				dir := collision.dir

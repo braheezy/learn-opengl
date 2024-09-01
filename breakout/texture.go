@@ -1,6 +1,8 @@
 package main
 
 import (
+	"unsafe"
+
 	"github.com/go-gl/gl/v4.1-core/gl"
 )
 
@@ -44,7 +46,11 @@ func (tex *Texture2D) Generate(width, height int32, pixelData []byte) {
 	tex.Height = height
 
 	gl.BindTexture(gl.TEXTURE_2D, tex.ID)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, tex.Internal_Format, width, height, 0, tex.Image_Format, gl.UNSIGNED_BYTE, gl.Ptr(pixelData))
+	var data unsafe.Pointer
+	if pixelData != nil {
+		data = gl.Ptr(pixelData)
+	}
+	gl.TexImage2D(gl.TEXTURE_2D, 0, tex.Internal_Format, width, height, 0, tex.Image_Format, gl.UNSIGNED_BYTE, data)
 	// set Texture wrap and filter modes
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, tex.Wrap_S)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, tex.Wrap_T)
