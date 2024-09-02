@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"math"
 	"math/rand"
@@ -43,20 +44,24 @@ type Collision struct {
 type Game struct {
 	state         GameState
 	keys          [1024]bool
+	keysProcessed [1024]bool
 	width, height int
 	levels        []GameLevel
 	currentLevel  int
 	powerUps      []Powerup
+	lives         int
 }
 
 var game = Game{
 	state:  GameActive,
 	width:  windowWidth,
 	height: windowHeight,
+	lives:  3,
 }
 var renderer *SpriteRenderer
 
 var (
+	white          = mgl32.Vec3{1.0, 1.0, 1.0}
 	player         *GameObject
 	playerSize     = mgl32.Vec2{100.0, 20.0}
 	playerVelocity = 500.0
@@ -69,6 +74,8 @@ var (
 
 	effects   *PostProcessor
 	shakeTime = float32(0)
+
+	text *TextRenderer
 )
 
 func (g *Game) Init() {
@@ -95,6 +102,9 @@ func (g *Game) Init() {
 	LoadTexture("textures/powerup_chaos.png", true, "powerup_chaos")
 	LoadTexture("textures/powerup_increase.png", true, "powerup_increase")
 	LoadTexture("textures/powerup_passthrough.png", true, "powerup_passthrough")
+	// load fonts
+	text = NewTextRenderer(g.width, g.height)
+	text.Load("fonts/ocraext.ttf", 24)
 	// initialize audio
 	initAudio()
 	// set render-specific controls
@@ -126,7 +136,6 @@ func (g *Game) Init() {
 
 	playAudioOnLoop("sounds/breakout.qoa")
 }
-
 func (g *Game) Update(deltaTime float64) {
 	// update objects
 	ball.Move(float32(deltaTime), g.width)
@@ -136,20 +145,32 @@ func (g *Game) Update(deltaTime float64) {
 	particles.Update(float32(deltaTime), ball, 2, mgl32.Vec2{ball.radius / 2.0, ball.radius / 2.0})
 	// update powerups
 	g.UpdatePowerups(float32(deltaTime))
-	// did ball reach bottom edge?
-	if ball.obj.position.Y() >= float32(g.height) {
-		g.ResetLevel()
-		g.ResetPlayer()
-	}
 	if shakeTime > 0.0 {
 		shakeTime -= float32(deltaTime)
 		if shakeTime <= 0.0 {
 			effects.shake = false
 		}
 	}
+	// did ball reach bottom edge?
+	if ball.obj.position.Y() >= float32(g.height) {
+		g.lives--
+		// no more lives? ya done
+		if g.lives == 0 {
+			g.ResetLevel()
+			g.state = GameMenu
+		}
+		g.ResetPlayer()
+	}
+	if g.state == GameActive && g.levels[g.currentLevel].IsCompleted() {
+		g.ResetLevel()
+		g.ResetPlayer()
+		effects.chaos = true
+		g.state = GameWin
+	}
 }
 func (g *Game) ProcessInput(deltaTime float64) {
-	if g.state == GameActive {
+	switch g.state {
+	case GameActive:
 		velocity := playerVelocity * deltaTime
 		// move playerboard
 		if g.keys[glfw.KeyA] || g.keys[glfw.KeyLeft] {
@@ -168,14 +189,50 @@ func (g *Game) ProcessInput(deltaTime float64) {
 				}
 			}
 		}
-		// player start game
+		// player start ball
 		if g.keys[glfw.KeySpace] {
 			ball.stuck = false
 		}
+	case GameMenu:
+		if g.keys[glfw.KeyEnter] && !g.keysProcessed[glfw.KeyEnter] {
+			g.state = GameActive
+			g.keysProcessed[glfw.KeyEnter] = true
+		}
+		if g.keys[glfw.KeyW] && !g.keysProcessed[glfw.KeyW] {
+			g.currentLevel = (g.currentLevel + 1) % 4
+			g.keysProcessed[glfw.KeyW] = true
+		}
+		if g.keys[glfw.KeyUp] && !g.keysProcessed[glfw.KeyUp] {
+			g.currentLevel = (g.currentLevel + 1) % 4
+			g.keysProcessed[glfw.KeyUp] = true
+		}
+		if g.keys[glfw.KeyDown] && !g.keysProcessed[glfw.KeyDown] {
+			if g.currentLevel > 0 {
+				g.currentLevel--
+			} else {
+				g.currentLevel = 3
+			}
+			g.keysProcessed[glfw.KeyDown] = true
+		}
+		if g.keys[glfw.KeyS] && !g.keysProcessed[glfw.KeyS] {
+			if g.currentLevel > 0 {
+				g.currentLevel--
+			} else {
+				g.currentLevel = 3
+			}
+			g.keysProcessed[glfw.KeyS] = true
+		}
+	case GameWin:
+		if g.keys[glfw.KeyEnter] {
+			g.keysProcessed[glfw.KeyEnter] = true
+			effects.chaos = false
+			g.state = GameActive
+		}
+
 	}
 }
 func (g *Game) Render() {
-	if g.state == GameActive {
+	if g.state == GameActive || g.state == GameMenu {
 
 		effects.BeginRender()
 
@@ -203,6 +260,16 @@ func (g *Game) Render() {
 
 		effects.EndRender()
 		effects.Render(float32(glfw.GetTime()))
+		// render text (not included in post processing)
+		text.RenderText(fmt.Sprintf("Lives:%v", g.lives), 5.0, 5.0, 1.0, white)
+	}
+	if g.state == GameMenu {
+		text.RenderText("Press ENTER to start", 250.0, windowHeight/2.0, 1.0, white)
+		text.RenderText("Press W/Up or S/Down to select level", 200.0, windowHeight/2.0+20.0, 0.75, white)
+	}
+	if g.state == GameWin {
+		text.RenderText("You WON!!!", 320.0, windowHeight/2.0-20.0, 1.0, mgl32.Vec3{0.0, 1.0, 0.0})
+		text.RenderText("Press ENTER to retry or ESC to quit", 130.0, windowHeight/2.0, 1.0, mgl32.Vec3{1.0, 1.0, 0.0})
 	}
 }
 func (g *Game) DoCollisions() {
@@ -304,6 +371,7 @@ func (g *Game) ResetLevel() {
 	case 3:
 		g.levels[3] = LoadLevel("levels/four.lvl", g.width, g.height/2)
 	}
+	g.lives = 3
 }
 func (g *Game) ResetPlayer() {
 	// reset player/ball stats
@@ -314,8 +382,8 @@ func (g *Game) ResetPlayer() {
 	effects.chaos = false
 	ball.passthrough = false
 	ball.sticky = false
-	player.color = mgl32.Vec3{1.0, 1.0, 1.0}
-	ball.obj.color = mgl32.Vec3{1.0, 1.0, 1.0}
+	player.color = white
+	ball.obj.color = white
 }
 func ShouldSpawn(chance int) bool {
 	return rand.Int()%chance == 0
@@ -378,12 +446,12 @@ func (g *Game) UpdatePowerups(deltaTime float32) {
 					if !isOtherPowerupActive(g.powerUps, "sticky") {
 						// only reset if no other sticky powerups are active
 						ball.sticky = false
-						player.color = mgl32.Vec3{1.0, 1.0, 1.0}
+						player.color = white
 					}
 				case "pass-through":
 					if !isOtherPowerupActive(g.powerUps, "pass-through") {
 						ball.passthrough = false
-						ball.obj.color = mgl32.Vec3{1.0, 1.0, 1.0}
+						ball.obj.color = white
 					}
 				case "confuse":
 					if !isOtherPowerupActive(g.powerUps, "confuse") {
@@ -517,6 +585,7 @@ func keyCallback(w *glfw.Window, key glfw.Key, scancode int, action glfw.Action,
 			game.keys[key] = true
 		} else if action == glfw.Release {
 			game.keys[key] = false
+			game.keysProcessed[key] = false
 		}
 	}
 }

@@ -127,7 +127,7 @@ func main() {
 	shader.setMat4("projection", projection)
 
 	// Initialize freetype context and load the font
-	fontBytes, err := os.ReadFile("assets/Antonio-Regular.ttf")
+	fontBytes, err := os.ReadFile("breakout/fonts/ocraext.ttf")
 	if err != nil {
 		fmt.Println("ERROR: Failed to load font file:", err)
 		return

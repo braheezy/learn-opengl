@@ -75,7 +75,7 @@ func (lvl *GameLevel) initialize(tileData [][]uint, levelWidth, levelHeight int)
 				obj.isSolid = true
 				lvl.bricks = append(lvl.bricks, obj)
 			} else if tileData[y][x] > 1 {
-				color := mgl32.Vec3{1.0, 1.0, 1.0}
+				color := white
 				if tileData[y][x] == 2 {
 					color = mgl32.Vec3{0.2, 0.6, 1.0}
 				} else if tileData[y][x] == 3 {

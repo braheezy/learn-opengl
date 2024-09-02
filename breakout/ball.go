@@ -23,7 +23,7 @@ func NewBall(pos mgl32.Vec2, radius float32, velocity mgl32.Vec2, sprite *Textur
 			position: pos,
 			size:     mgl32.Vec2{radius * 2.0, radius * 2.0},
 			sprite:   sprite,
-			color:    mgl32.Vec3{1.0, 1.0, 1.0},
+			color:    white,
 			velocity: velocity,
 		},
 		radius: radius,

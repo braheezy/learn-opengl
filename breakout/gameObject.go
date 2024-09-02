@@ -14,7 +14,7 @@ type GameObject struct {
 func NewDefaultGameObject() GameObject {
 	return GameObject{
 		size:  mgl32.Vec2{1.0, 1.0},
-		color: mgl32.Vec3{1.0, 1.0, 1.0},
+		color: white,
 	}
 }
 
