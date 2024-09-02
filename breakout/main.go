@@ -95,6 +95,8 @@ func (g *Game) Init() {
 	LoadTexture("textures/powerup_chaos.png", true, "powerup_chaos")
 	LoadTexture("textures/powerup_increase.png", true, "powerup_increase")
 	LoadTexture("textures/powerup_passthrough.png", true, "powerup_passthrough")
+	// initialize audio
+	initAudio()
 	// set render-specific controls
 	renderer = NewSpriteRenderer(GetShader("sprite"))
 	particles = NewParticleGenerator(GetShader("particle"), GetTexture("particle"), 500)
@@ -121,7 +123,10 @@ func (g *Game) Init() {
 		-ballRadius * 2.0,
 	})
 	ball = NewBall(ballPos, ballRadius, initialBallVelocity, GetTexture("face"))
+
+	playAudioOnLoop("sounds/breakout.qoa")
 }
+
 func (g *Game) Update(deltaTime float64) {
 	// update objects
 	ball.Move(float32(deltaTime), g.width)
@@ -210,10 +215,12 @@ func (g *Game) DoCollisions() {
 				if !box.isSolid {
 					box.destroyed = true
 					g.SpawnPowerups(box)
+					playAudioOnce("sounds/bleep-block.qoa")
 				} else {
 					// if block is solid, shake it
 					shakeTime = 0.05
 					effects.shake = true
+					playAudioOnce("sounds/solid.qoa")
 				}
 				// collision resolution
 				dir := collision.dir
@@ -251,6 +258,22 @@ func (g *Game) DoCollisions() {
 		}
 	}
 
+	for i := range g.powerUps {
+		powerup := &g.powerUps[i]
+		if !powerup.obj.destroyed {
+			if powerup.obj.position.Y() >= float32(g.height) {
+				powerup.obj.destroyed = true
+			}
+			if CheckCollision(*player, *powerup.obj) {
+				// collided with player, activate!
+				ActivatePowerup(powerup)
+				powerup.obj.destroyed = true
+				powerup.activated = true
+				playAudioOnce("sounds/powerup.qoa")
+			}
+		}
+	}
+
 	collision := CheckBallCollision(ball, player)
 	if !ball.stuck && collision.hit {
 		// check where it hit the board, and change velocity accordingly
@@ -266,21 +289,8 @@ func (g *Game) DoCollisions() {
 
 		// if Sticky powerup is activated, also stick ball to paddle once new velocity vectors were calculated
 		ball.stuck = ball.sticky
-	}
 
-	for i := range g.powerUps {
-		powerup := &g.powerUps[i]
-		if !powerup.obj.destroyed {
-			if powerup.obj.position.Y() >= float32(g.height) {
-				powerup.obj.destroyed = true
-			}
-			if CheckCollision(*player, *powerup.obj) {
-				// collided with player, activate!
-				ActivatePowerup(powerup)
-				powerup.obj.destroyed = true
-				powerup.activated = true
-			}
-		}
+		playAudioOnce("sounds/bleep-paddle.qoa")
 	}
 }
 func (g *Game) ResetLevel() {
