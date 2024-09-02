@@ -3,9 +3,10 @@ package main
 import "github.com/go-gl/mathgl/mgl32"
 
 type Ball struct {
-	obj    GameObject
-	radius float32
-	stuck  bool
+	obj                 GameObject
+	radius              float32
+	stuck               bool
+	sticky, passthrough bool
 }
 
 func NewDefaultBall() *Ball {
@@ -55,4 +56,6 @@ func (b *Ball) Reset(pos mgl32.Vec2, velocity mgl32.Vec2) {
 	b.obj.position = pos
 	b.obj.velocity = velocity
 	b.stuck = true
+	b.sticky = false
+	b.passthrough = false
 }

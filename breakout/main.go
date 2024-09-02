@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"math"
+	"math/rand"
 	"runtime"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -45,6 +46,7 @@ type Game struct {
 	width, height int
 	levels        []GameLevel
 	currentLevel  int
+	powerUps      []Powerup
 }
 
 var game = Game{
@@ -87,6 +89,12 @@ func (g *Game) Init() {
 	LoadTexture("textures/background.jpg", false, "background")
 	LoadTexture("textures/paddle.png", true, "paddle")
 	LoadTexture("textures/particle.png", true, "particle")
+	LoadTexture("textures/powerup_speed.png", true, "powerup_speed")
+	LoadTexture("textures/powerup_sticky.png", true, "powerup_sticky")
+	LoadTexture("textures/powerup_confuse.png", true, "powerup_confuse")
+	LoadTexture("textures/powerup_chaos.png", true, "powerup_chaos")
+	LoadTexture("textures/powerup_increase.png", true, "powerup_increase")
+	LoadTexture("textures/powerup_passthrough.png", true, "powerup_passthrough")
 	// set render-specific controls
 	renderer = NewSpriteRenderer(GetShader("sprite"))
 	particles = NewParticleGenerator(GetShader("particle"), GetTexture("particle"), 500)
@@ -113,7 +121,6 @@ func (g *Game) Init() {
 		-ballRadius * 2.0,
 	})
 	ball = NewBall(ballPos, ballRadius, initialBallVelocity, GetTexture("face"))
-
 }
 func (g *Game) Update(deltaTime float64) {
 	// update objects
@@ -122,6 +129,8 @@ func (g *Game) Update(deltaTime float64) {
 	game.DoCollisions()
 	// update particles
 	particles.Update(float32(deltaTime), ball, 2, mgl32.Vec2{ball.radius / 2.0, ball.radius / 2.0})
+	// update powerups
+	g.UpdatePowerups(float32(deltaTime))
 	// did ball reach bottom edge?
 	if ball.obj.position.Y() >= float32(g.height) {
 		g.ResetLevel()
@@ -175,6 +184,13 @@ func (g *Game) Render() {
 		g.levels[g.currentLevel].Draw(renderer)
 		// draw player
 		player.Draw(renderer)
+		// draw powerups
+		for i := range g.powerUps {
+			powerup := &g.powerUps[i]
+			if !powerup.obj.destroyed {
+				powerup.obj.Draw(renderer)
+			}
+		}
 		// draw particles
 		particles.Draw()
 		// draw ball
@@ -193,6 +209,7 @@ func (g *Game) DoCollisions() {
 				// destroy block if not solid
 				if !box.isSolid {
 					box.destroyed = true
+					g.SpawnPowerups(box)
 				} else {
 					// if block is solid, shake it
 					shakeTime = 0.05
@@ -201,31 +218,33 @@ func (g *Game) DoCollisions() {
 				// collision resolution
 				dir := collision.dir
 				diff := collision.diff
-				if dir == Left || dir == Right {
-					// horizontal collision
-					// reverse
-					ball.obj.velocity[0] = -ball.obj.velocity[0]
-					// relocate
-					penetration := ball.radius - float32(math.Abs(float64(diff.X())))
-					if dir == Left {
-						// move ball right
-						ball.obj.position[0] += penetration
+				if !(ball.passthrough && !box.isSolid) {
+					if dir == Left || dir == Right {
+						// horizontal collision
+						// reverse
+						ball.obj.velocity[0] = -ball.obj.velocity[0]
+						// relocate
+						penetration := ball.radius - float32(math.Abs(float64(diff.X())))
+						if dir == Left {
+							// move ball right
+							ball.obj.position[0] += penetration
+						} else {
+							// move ball left
+							ball.obj.position[0] -= penetration
+						}
 					} else {
-						// move ball left
-						ball.obj.position[0] -= penetration
-					}
-				} else {
-					// vertical collision
-					// reverse
-					ball.obj.velocity[1] = -ball.obj.velocity[1]
-					// relocate
-					penetration := ball.radius - float32(math.Abs(float64(diff.Y())))
-					if dir == Up {
-						// move ball right
-						ball.obj.position[1] -= penetration
-					} else {
-						// move ball left
-						ball.obj.position[1] += penetration
+						// vertical collision
+						// reverse
+						ball.obj.velocity[1] = -ball.obj.velocity[1]
+						// relocate
+						penetration := ball.radius - float32(math.Abs(float64(diff.Y())))
+						if dir == Up {
+							// move ball right
+							ball.obj.position[1] -= penetration
+						} else {
+							// move ball left
+							ball.obj.position[1] += penetration
+						}
 					}
 				}
 			}
@@ -244,6 +263,24 @@ func (g *Game) DoCollisions() {
 		ball.obj.velocity[0] = initialBallVelocity.X() * percentage * strength
 		ball.obj.velocity[1] = -1.0 * float32(math.Max(1.5*math.Abs(float64(ball.obj.velocity[1])), 250.0))
 		ball.obj.velocity = ball.obj.velocity.Normalize().Mul(oldVelocity.Len())
+
+		// if Sticky powerup is activated, also stick ball to paddle once new velocity vectors were calculated
+		ball.stuck = ball.sticky
+	}
+
+	for i := range g.powerUps {
+		powerup := &g.powerUps[i]
+		if !powerup.obj.destroyed {
+			if powerup.obj.position.Y() >= float32(g.height) {
+				powerup.obj.destroyed = true
+			}
+			if CheckCollision(*player, *powerup.obj) {
+				// collided with player, activate!
+				ActivatePowerup(powerup)
+				powerup.obj.destroyed = true
+				powerup.activated = true
+			}
+		}
 	}
 }
 func (g *Game) ResetLevel() {
@@ -263,6 +300,109 @@ func (g *Game) ResetPlayer() {
 	player.size = playerSize
 	player.position = mgl32.Vec2{float32(g.width)/2.0 - playerSize.X()/2.0, float32(g.height) - playerSize.Y()}
 	ball.Reset(player.position.Add(mgl32.Vec2{playerSize.X()/2.0 - ballRadius, -(ballRadius * 2.0)}), initialBallVelocity)
+	effects.confuse = false
+	effects.chaos = false
+	ball.passthrough = false
+	ball.sticky = false
+	player.color = mgl32.Vec3{1.0, 1.0, 1.0}
+	ball.obj.color = mgl32.Vec3{1.0, 1.0, 1.0}
+}
+func ShouldSpawn(chance int) bool {
+	return rand.Int()%chance == 0
+}
+func (g *Game) SpawnPowerups(block *GameObject) {
+	if ShouldSpawn(75) {
+		g.powerUps = append(g.powerUps, *NewPowerup("speed", mgl32.Vec3{0.5, 0.5, 1.0}, 0.0, block.position, GetTexture("powerup_speed")))
+	}
+	if ShouldSpawn(75) {
+		g.powerUps = append(g.powerUps, *NewPowerup("sticky", mgl32.Vec3{1.0, 0.5, 1.0}, 20.0, block.position, GetTexture("powerup_sticky")))
+	}
+	if ShouldSpawn(75) {
+		g.powerUps = append(g.powerUps, *NewPowerup("pass-through", mgl32.Vec3{0.5, 1.0, 0.5}, 10.0, block.position, GetTexture("powerup_passthrough")))
+	}
+	if ShouldSpawn(75) {
+		g.powerUps = append(g.powerUps, *NewPowerup("pad-size-increase", mgl32.Vec3{1.0, 0.6, 0.4}, 0.0, block.position, GetTexture("powerup_increase")))
+	}
+	if ShouldSpawn(15) {
+		g.powerUps = append(g.powerUps, *NewPowerup("confuse", mgl32.Vec3{1.0, 0.3, 0.3}, 15.0, block.position, GetTexture("powerup_confuse")))
+	}
+	if ShouldSpawn(15) {
+		g.powerUps = append(g.powerUps, *NewPowerup("chaos", mgl32.Vec3{0.9, 0.25, 0.25}, 15.0, block.position, GetTexture("powerup_chaos")))
+	}
+}
+func ActivatePowerup(powerup *Powerup) {
+	switch powerup.kind {
+	case "speed":
+		ball.obj.velocity = ball.obj.velocity.Mul(1.2)
+	case "sticky":
+		ball.sticky = true
+		player.color = mgl32.Vec3{1.0, 0.5, 1.0}
+	case "pass-through":
+		ball.passthrough = true
+		ball.obj.color = mgl32.Vec3{1.0, 0.5, 0.5}
+	case "pad-size-increase":
+		player.size[0] += 50.0
+	case "confuse":
+		if !effects.chaos {
+			effects.confuse = true
+		}
+	case "chaos":
+		if !effects.confuse {
+			effects.chaos = true
+		}
+	}
+}
+func (g *Game) UpdatePowerups(deltaTime float32) {
+	for i := range g.powerUps {
+		powerup := &g.powerUps[i]
+		powerup.obj.position = powerup.obj.position.Add(powerup.obj.velocity.Mul(deltaTime))
+		if powerup.activated {
+			powerup.duration -= deltaTime
+			if powerup.duration <= 0.0 {
+				// remove powerup from list
+				powerup.activated = false
+				// deactivate effects
+				// speed and pad-increase are perma-buffs
+				switch powerup.kind {
+				case "sticky":
+					if !isOtherPowerupActive(g.powerUps, "sticky") {
+						// only reset if no other sticky powerups are active
+						ball.sticky = false
+						player.color = mgl32.Vec3{1.0, 1.0, 1.0}
+					}
+				case "pass-through":
+					if !isOtherPowerupActive(g.powerUps, "pass-through") {
+						ball.passthrough = false
+						ball.obj.color = mgl32.Vec3{1.0, 1.0, 1.0}
+					}
+				case "confuse":
+					if !isOtherPowerupActive(g.powerUps, "confuse") {
+						effects.confuse = false
+					}
+				case "chaos":
+					if !isOtherPowerupActive(g.powerUps, "chaos") {
+						effects.chaos = false
+					}
+				}
+			}
+		}
+	}
+	result := g.powerUps[:0] // Reuse the underlying array, keeps the capacity intact
+	for i := range g.powerUps {
+		powerup := g.powerUps[i]
+		if !(powerup.obj.destroyed && !powerup.activated) {
+			result = append(result, powerup)
+		}
+	}
+	g.powerUps = result
+}
+func isOtherPowerupActive(powerups []Powerup, kind string) bool {
+	for _, powerup := range powerups {
+		if powerup.activated && powerup.kind == kind {
+			return true
+		}
+	}
+	return false
 }
 func VectorDirection(target mgl32.Vec2) Direction {
 	compass := []mgl32.Vec2{
