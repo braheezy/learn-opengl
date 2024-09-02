@@ -1,4 +1,4 @@
-module github.com/braheezy/learn-opengl-go
+module github.com/braheezy/learn-opengl
 
 go 1.23.0
 
